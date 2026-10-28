@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#24527f">
+<title>Team Time Clock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: one narrow column like a time card; admins get a second "Team" tab. */
+:root{
+  --bg:#e9eef2; --surface:#ffffff; --ink:#16212c; --muted:#5a6876; --line:#d2dae2;
+  --brand:#24527f; --in:#18794a; --in-ink:#ffffff; --out:#b02a1f; --out-ink:#ffffff;
+  --warn-bg:#fff2cc; --warn:#7a5600; --soft:#f3f6f9;
+  --f-display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --f-body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0f161d; --surface:#18222c; --ink:#e6edf3; --muted:#9aa9b7; --line:#2b3846;
+  --brand:#7fb0e0; --in:#2fa36a; --in-ink:#06150d; --out:#e0645a; --out-ink:#1d0605;
+  --warn-bg:#3a2f10; --warn:#f2cf73; --soft:#1e2a35; color-scheme:dark}}
+*{box-sizing:border-box}
+html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 var(--f-body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px 40px}
+[hidden]{display:none!important}
+.wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.hd-right{display:flex;gap:6px}
+h1{font:700 26px/1 var(--f-display);letter-spacing:.02em;text-transform:uppercase;margin:0}
+h2{font:600 19px/1.2 var(--f-display);letter-spacing:.04em;text-transform:uppercase;margin:0 0 10px;color:var(--muted)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;border-radius:10px;border:1px solid var(--line);background:var(--surface);padding:10px 14px;min-height:44px}
+button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.tabs{display:flex;gap:6px}
+.tabs button{flex:1;font-weight:600}
+.tabs button[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px}
+.timecard{border:2px dashed var(--line);text-align:center;display:flex;flex-direction:column;gap:10px;padding:22px 16px}
+.hello{font-weight:600;color:var(--muted)}
+.now{font:600 56px/1 var(--f-display);font-variant-numeric:tabular-nums}
+.date{color:var(--muted);margin-top:-4px}
+.status{font-weight:600}
+.big{min-height:84px;border:0;border-radius:16px;font:700 32px/1 var(--f-display);letter-spacing:.06em;text-transform:uppercase}
+.big.in{background:var(--in);color:var(--in-ink)}
+.big.out{background:var(--out);color:var(--out-ink)}
+.big:disabled{opacity:.6}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center}
+.stat b{display:block;font:600 28px/1.1 var(--f-display);font-variant-numeric:tabular-nums}
+.stat span{font-size:13px;color:var(--muted)}
+form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+form .full{grid-column:1/-1}
+label{display:flex;flex-direction:column;gap:4px;font-size:14px;color:var(--muted);min-width:0}
+input,select{border:1px solid var(--line);border-radius:10px;background:var(--soft);padding:10px;min-height:44px;width:100%}
+.primary{background:var(--brand);color:var(--surface);border-color:var(--brand);font-weight:600}
+.link{background:none;border:0;color:var(--brand);text-decoration:underline;padding:6px;min-height:0}
+ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+li:first-child{border-top:0}
+li .main{min-width:0;flex:1}
+li .sub{font-size:14px;color:var(--muted)}
+.num{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.pill{display:inline-block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:99px;background:var(--soft);color:var(--muted)}
+.pill.on,.pill.approved{background:var(--in);color:var(--in-ink)}
+.pill.pending{background:var(--warn-bg);color:var(--warn)}
+.pill.denied{background:var(--out);color:var(--out-ink)}
+.row-btns{display:flex;gap:6px;flex-shrink:0}
+.small{min-height:36px;padding:6px 10px;font-size:14px}
+.danger{color:var(--out);border-color:var(--out)}
+.danger.armed{background:var(--out);color:var(--out-ink)}
+.empty{color:var(--muted);margin:0}
+.team li{cursor:pointer}
+.team li:hover .main b{text-decoration:underline}
+.auth{max-width:420px;width:100%;margin:6vh auto 0}
+.auth form{grid-template-columns:1fr}
+.auth .switch{text-align:center;margin-top:8px}
+.note{font-size:14px;color:var(--muted);margin:0}
+.notice{display:flex;gap:12px;align-items:center;background:var(--warn-bg);color:var(--warn);border-radius:14px;padding:14px 16px;font-weight:600}
+.notice b{font:700 30px/1 var(--f-display);font-variant-numeric:tabular-nums;flex-shrink:0}
+.notice .sub{font-weight:400}
+.msg{padding:28px 16px;text-align:center;color:var(--muted)}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:10px 18px;border-radius:99px;font-weight:600;max-width:calc(100% - 32px);text-align:center}
+@media (max-width:420px){.now{font-size:46px}.stat b{font-size:24px}}
+@media (prefers-reduced-motion:no-preference){.big{transition:transform .08s}.big:active{transform:scale(.98)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 data-t="title"></h1>
+    <div class="hd-right">
+      <button id="btn-lang" data-act="lang" style="font-weight:600"></button>
+      <button id="btn-out" data-act="signout" data-t="signOut" hidden></button>
+    </div>
+  </header>
+
+  <p class="msg" id="msg" data-t="loading"></p>
+
+  <!-- sign in / sign up / reset -->
+  <section id="v-auth" class="card auth" hidden>
+    <h2 id="auth-h"></h2>
+    <form id="f-auth">
+      <label id="lbl-name"><span data-t="fullName"></span><input id="a-name" autocomplete="name" maxlength="60"></label>
+      <label id="lbl-email"><span data-t="email"></span><input id="a-email" type="email" autocomplete="email"></label>
+      <label id="lbl-pass"><span data-t="password"></span><input id="a-pass" type="password" minlength="8" autocomplete="current-password"></label>
+      <button class="primary" id="a-submit"></button>
+      <p class="note" id="a-note"></p>
+    </form>
+    <div class="switch">
+      <button class="link" type="button" data-act="mode" data-m="signup" id="sw-signup" data-t="needAccount"></button>
+      <button class="link" type="button" data-act="mode" data-m="signin" id="sw-signin" data-t="haveAccount"></button>
+      <button class="link" type="button" data-act="mode" data-m="reset" id="sw-reset" data-t="forgot"></button>
+    </div>
+  </section>
+
+  <div class="tabs" id="tabs" hidden>
+    <button data-act="tab" data-v="clock" data-t="myClock"></button>
+    <button data-act="tab" data-v="team" data-t="team"></button>
+  </div>
+
+  <section id="v-clock" hidden class="wrap">
+    <div class="notice" id="hol-notice" role="status" hidden></div>
+    <div class="card timecard">
+      <div class="hello" id="clk-hello"></div>
+      <div class="now" id="clk-now"></div>
+      <div class="date" id="clk-date"></div>
+      <div class="status" id="clk-status"></div>
+      <button class="big in" id="btn-punch" data-act="punch"></button>
+    </div>
+    <div class="stats" id="clk-stats"></div>
+    <div class="card">
+      <h2 data-t="requestPto"></h2>
+      <form id="f-pto">
+        <label><span data-t="date"></span><input type="date" id="pto-date" required></label>
+        <label><span data-t="hours"></span><input type="number" id="pto-hours" min="0.5" max="24" step="0.5" value="8" required></label>
+        <label class="full"><span data-t="note"></span><input type="text" id="pto-note" maxlength="200"></label>
+        <button class="primary full" data-t="send"></button>
+      </form>
+      <ul id="pto-list" style="margin-top:12px"></ul>
+    </div>
+    <div class="card">
+      <h2 data-t="history"></h2>
+      <ul id="hist"></ul>
+    </div>
+    <div class="card">
+      <h2 data-t="holidays"></h2>
+      <ul id="hol-list"></ul>
+      <form id="f-hol" hidden style="margin-top:12px">
+        <label><span data-t="date"></span><input type="date" id="hol-date" required></label>
+        <label><span data-t="name"></span><input type="text" id="hol-name" maxlength="60" required></label>
+        <button class="primary full" data-t="addHoliday"></button>
+      </form>
+    </div>
+  </section>
+
+  <section id="v-team" hidden class="wrap">
+    <div class="card" id="team-card">
+      <h2 data-t="team"></h2>
+      <ul class="team" id="team-list"></ul>
+    </div>
+    <div id="detail" hidden class="wrap">
+      <button data-act="back" data-t="back" style="align-self:flex-start"></button>
+      <div class="card">
+        <h2 id="d-name" style="color:var(--ink);font-size:24px;margin-bottom:2px"></h2>
+        <p class="note" id="d-email" style="margin-bottom:10px"></p>
+        <div id="d-status" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"></div>
+        <div class="stats" id="d-stats" style="margin-top:12px"></div>
+        <div style="margin-top:12px" id="d-role"></div>
+      </div>
+      <div class="card">
+        <h2 data-t="ptoReqs"></h2>
+        <ul id="d-pto"></ul>
+        <form id="f-allow" style="margin-top:12px">
+          <label class="full"><span data-t="allowance"></span><input type="number" id="allow" min="0" max="999" step="0.5" required></label>
+          <button class="primary full" data-t="save"></button>
+        </form>
+      </div>
+      <div class="card">
+        <h2 data-t="shifts"></h2>
+        <ul id="d-shifts"></ul>
+        <h2 data-t="addShift" style="margin-top:16px"></h2>
+        <form id="f-shift">
+          <label class="full"><span data-t="date"></span><input type="date" id="sh-date" required></label>
+          <label><span data-t="start"></span><input type="time" id="sh-in" required></label>
+          <label><span data-t="end"></span><input type="time" id="sh-out" required></label>
+          <button class="primary full" data-t="add"></button>
+        </form>
+      </div>
+    </div>
+  </section>
+</div>
+<div id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.113.0/dist/umd/supabase.js"></script>
+<script>
+if(!window.supabase){document.getElementById("msg").textContent="Couldn't load the sign-in system. Check your internet connection and reload. / No se pudo cargar. Revisa tu conexión y recarga.";throw new Error("supabase-js failed to load")}
+// Public project URL + publishable key: safe in the browser, the database's row-level security does the protecting.
+const SB_URL="https://jegfqjvrntiopfufhoxi.supabase.co";
+const SB_KEY="sb_publishable_B_A8UAQMbDj5ZSitwRDlyg_oLdErUNR";
+const sb=supabase.createClient(SB_URL,SB_KEY);
+
+const T={
+en:{title:"Time Clock",other:"Español",loading:"Loading…",myClock:"My clock",team:"Team",signOut:"Sign out",
+ signIn:"Sign in",signUp:"Create account",resetH:"Reset password",newPassH:"Choose a new password",
+ fullName:"Full name",email:"Email",password:"Password (8+ characters)",
+ needAccount:"New here? Create an account",haveAccount:"Already have an account? Sign in",forgot:"Forgot password?",
+ sendLink:"Email me a reset link",setPass:"Save new password",
+ checkEmail:"Check your email and tap the link to finish. Then come back and sign in.",
+ linkSent:"If that email has an account, a reset link is on its way.",passSaved:"Password saved. You're signed in.",
+ hello:"Hi, {n}",
+ clockIn:"Clock in",clockOut:"Clock out",onSince:"On the clock since {t} · {d}",off:"You are clocked out",
+ today:"Today",thisWeek:"This week",lastWeek:"Last week",ptoLeft:"PTO left",hrs:"hrs",
+ requestPto:"Request time off",date:"Date",hours:"Hours",note:"Note (optional)",send:"Send request",
+ pending:"Pending",approved:"Approved",denied:"Denied",cancel:"Cancel",
+ history:"Recent shifts",noShifts:"No shifts yet.",holidays:"Holidays",noHolidays:"No upcoming holidays.",
+ name:"Name",addHoliday:"Add holiday",del:"Delete",sure:"Tap again",
+ back:"← Team",ptoReqs:"Time off",noPto:"No time-off requests.",allowance:"PTO hours per year",save:"Save",
+ approve:"Approve",deny:"Deny",shifts:"Shifts (last 90 days)",addShift:"Add a missed shift",start:"Start",end:"End",add:"Add shift",
+ in:"In",out:"Out",forceOut:"Clock them out now",pendingN:"{n} waiting",admin:"Admin",
+ makeAdmin:"Make admin",makeEmp:"Make employee",
+ emptyTeam:"Nobody else has signed up yet. Send your team this page's link; they appear here once they create an account.",
+ saved:"Saved",sent:"Request sent",punchedIn:"Clocked in at {t}",punchedOut:"Clocked out at {t}",
+ err:"That didn't save. Check your connection and try again.",badShift:"End time must be after start time.",
+ badLogin:"Email or password is wrong, or the email isn't confirmed yet.",
+ dayOff:"Day off",offToday:"Today is {n}. We're off, enjoy the day!",nextOff:"Next day off: {n}",inDays:"days",tomorrow:"Tomorrow"},
+es:{title:"Reloj de Tiempo",other:"English",loading:"Cargando…",myClock:"Mi reloj",team:"Equipo",signOut:"Salir",
+ signIn:"Iniciar sesión",signUp:"Crear cuenta",resetH:"Restablecer contraseña",newPassH:"Elige una contraseña nueva",
+ fullName:"Nombre completo",email:"Correo electrónico",password:"Contraseña (8+ caracteres)",
+ needAccount:"¿Eres nuevo? Crea una cuenta",haveAccount:"¿Ya tienes cuenta? Inicia sesión",forgot:"¿Olvidaste tu contraseña?",
+ sendLink:"Envíame un enlace",setPass:"Guardar contraseña",
+ checkEmail:"Revisa tu correo y toca el enlace para terminar. Luego regresa e inicia sesión.",
+ linkSent:"Si ese correo tiene cuenta, te enviamos un enlace.",passSaved:"Contraseña guardada. Ya iniciaste sesión.",
+ hello:"Hola, {n}",
+ clockIn:"Marcar entrada",clockOut:"Marcar salida",onSince:"Trabajando desde las {t} · {d}",off:"No estás trabajando",
+ today:"Hoy",thisWeek:"Esta semana",lastWeek:"Semana pasada",ptoLeft:"PTO disponible",hrs:"hrs",
+ requestPto:"Pedir tiempo libre",date:"Fecha",hours:"Horas",note:"Nota (opcional)",send:"Enviar solicitud",
+ pending:"Pendiente",approved:"Aprobado",denied:"Rechazado",cancel:"Cancelar",
+ history:"Turnos recientes",noShifts:"Aún no hay turnos.",holidays:"Días festivos",noHolidays:"No hay días festivos próximos.",
+ name:"Nombre",addHoliday:"Agregar día festivo",del:"Borrar",sure:"Toca otra vez",
+ back:"← Equipo",ptoReqs:"Tiempo libre",noPto:"No hay solicitudes.",allowance:"Horas de PTO por año",save:"Guardar",
+ approve:"Aprobar",deny:"Rechazar",shifts:"Turnos (últimos 90 días)",addShift:"Agregar turno olvidado",start:"Entrada",end:"Salida",add:"Agregar turno",
+ in:"Dentro",out:"Fuera",forceOut:"Marcar su salida ahora",pendingN:"{n} esperando",admin:"Admin",
+ makeAdmin:"Hacer admin",makeEmp:"Hacer empleado",
+ emptyTeam:"Nadie más se ha registrado. Manda el enlace de esta página a tu equipo; aparecen aquí cuando crean su cuenta.",
+ saved:"Guardado",sent:"Solicitud enviada",punchedIn:"Entrada a las {t}",punchedOut:"Salida a las {t}",
+ err:"No se guardó. Revisa tu conexión e intenta otra vez.",badShift:"La salida debe ser después de la entrada.",
+ badLogin:"El correo o la contraseña no son correctos, o el correo aún no está confirmado.",
+ dayOff:"Día libre",offToday:"Hoy es {n}. ¡No trabajamos, disfruta el día!",nextOff:"Próximo día libre: {n}",inDays:"días",tomorrow:"Mañana"}};
+let lang;try{lang=localStorage.getItem("tc-lang")}catch(e){}
+if(!T[lang])lang=(navigator.language||"").startsWith("es")?"es":"en";
+const t=(k,v={})=>T[lang][k].replace(/\{(\w)\}/g,(_,x)=>v[x]);
+const loc=()=>lang==="es"?"es-MX":"en-US";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+const S={me:null,profile:null,admin:false,people:{},punches:[],pto:[],holidays:[],view:"clock",sel:null,busy:false,mode:"signin"};
+
+// ---- pure helpers ----
+const DAY=864e5;
+function weekStart(d=new Date()){const x=new Date(d);x.setHours(0,0,0,0);x.setDate(x.getDate()-((x.getDay()+6)%7));return +x}
+function dayStart(d=new Date()){const x=new Date(d);x.setHours(0,0,0,0);return +x}
+// punches: [{in:ms,out:ms|null}]; an open punch counts up to now
+function hoursIn(punches,from,to,now=Date.now()){let ms=0;for(const p of punches)if(p.in>=from&&p.in<to)ms+=(p.out||now)-p.in;return ms/36e5}
+function ptoUsed(pto,year){return pto.filter(p=>p.status==="approved"&&String(p.day).startsWith(year)).reduce((s,p)=>s+(+p.hours||0),0)}
+const fh=h=>(Math.round(h*100)/100).toFixed(2);
+const dur=ms=>{const m=Math.floor(ms/6e4);return Math.floor(m/60)+"h "+String(m%60).padStart(2,"0")+"m"};
+const ftime=ms=>new Date(ms).toLocaleTimeString(loc(),{hour:"numeric",minute:"2-digit"});
+const fday=d=>new Date(d).toLocaleDateString(loc(),{weekday:"short",month:"short",day:"numeric"});
+const daysUntil=(iso,now=new Date())=>Math.round((new Date(iso+"T00:00")-dayStart(now))/DAY);
+const isoDay=(d=new Date())=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+(()=>{const mon=weekStart(new Date(2026,9,21,15));console.assert(new Date(mon).getDay()===1&&new Date(mon).getDate()===19,"weekStart");
+ console.assert(hoursIn([{in:mon+8*36e5,out:mon+16.5*36e5},{in:mon+20*36e5,out:null}],mon,mon+DAY,mon+21*36e5)===9.5,"hoursIn");
+ console.assert(daysUntil("2026-11-26",new Date(2026,9,28,15))===29&&daysUntil("2026-10-28",new Date(2026,9,28,23))===0,"daysUntil");
+ console.assert(ptoUsed([{day:"2026-03-01",hours:8,status:"approved"},{day:"2026-04-01",hours:8,status:"pending"}],"2026")===8,"ptoUsed")})();
+
+// ---- per-person views of the loaded rows ----
+const punchesOf=uid=>S.punches.filter(p=>p.uid===uid);
+const openOf=uid=>S.punches.find(p=>p.uid===uid&&!p.out);
+const ptoOf=uid=>S.pto.filter(p=>p.user_id===uid);
+const nameOf=uid=>(S.people[uid]&&S.people[uid].full_name)||(S.people[uid]&&S.people[uid].email)||"—";
+
+function toast(m){const el=$("toast");el.textContent=m;el.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>el.hidden=true,3200)}
+function show(view){$("msg").hidden=view!=="msg";$("v-auth").hidden=view!=="auth";
+  const app=view==="app";$("btn-out").hidden=!app;$("tabs").hidden=!(app&&S.admin);
+  $("v-clock").hidden=!(app&&S.view==="clock");$("v-team").hidden=!(app&&S.view==="team")}
+
+function applyLang(){document.documentElement.lang=lang;
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=t(el.dataset.t));
+  $("btn-lang").textContent=T[lang].other;renderAuth();if(S.me)render()}
+
+// ---- auth ----
+function renderAuth(){const m=S.mode;
+  $("auth-h").textContent=t({signin:"signIn",signup:"signUp",reset:"resetH",newpass:"newPassH"}[m]);
+  $("a-submit").textContent=t({signin:"signIn",signup:"signUp",reset:"sendLink",newpass:"setPass"}[m]);
+  $("lbl-name").hidden=m!=="signup";$("lbl-email").hidden=m==="newpass";$("lbl-pass").hidden=m==="reset";
+  $("a-name").required=m==="signup";$("a-email").required=m!=="newpass";$("a-pass").required=m!=="reset";
+  $("a-pass").autocomplete=m==="signin"?"current-password":"new-password";
+  $("sw-signup").hidden=m!=="signin";$("sw-signin").hidden=m==="signin";$("sw-reset").hidden=m!=="signin"}
+$("f-auth").addEventListener("submit",async ev=>{ev.preventDefault();
+  const email=$("a-email").value.trim(),pass=$("a-pass").value,btn=$("a-submit");btn.disabled=true;$("a-note").textContent="";
+  try{
+    if(S.mode==="signin"){const{error}=await sb.auth.signInWithPassword({email,password:pass});if(error)$("a-note").textContent=t("badLogin")}
+    else if(S.mode==="signup"){const{data,error}=await sb.auth.signUp({email,password:pass,
+        options:{data:{full_name:$("a-name").value.trim()},emailRedirectTo:location.origin+location.pathname}});
+      if(error)$("a-note").textContent=error.message;else if(!data.session)$("a-note").textContent=t("checkEmail")}
+    else if(S.mode==="reset"){await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});$("a-note").textContent=t("linkSent")}
+    else if(S.mode==="newpass"){const{error}=await sb.auth.updateUser({password:pass});
+      if(error)$("a-note").textContent=error.message;else{toast(t("passSaved"));S.mode="signin";start()}}
+  }catch(e){$("a-note").textContent=t("err")}
+  btn.disabled=false});
+
+// ---- data ----
+async function load(){
+  const since=new Date(Date.now()-90*DAY).toISOString();
+  const [pr,pu,pt,ho]=await Promise.all([
+    sb.from("profiles").select("id,full_name,email,role,pto_allowance"),
+    sb.from("punches").select("id,user_id,clock_in,clock_out,manual").gte("clock_in",since).order("clock_in",{ascending:false}).limit(5000),
+    sb.from("pto_requests").select("id,user_id,day,hours,note,status").order("day",{ascending:false}),
+    sb.from("holidays").select("day,name").gte("day",isoDay()).order("day")]);
+  const err=pr.error||pu.error||pt.error||ho.error;if(err)throw err;
+  S.people={};pr.data.forEach(p=>S.people[p.id]=p);
+  S.profile=S.people[S.me];S.admin=S.profile&&S.profile.role==="admin";
+  S.punches=pu.data.map(p=>({id:p.id,uid:p.user_id,in:Date.parse(p.clock_in),out:p.clock_out?Date.parse(p.clock_out):null,manual:p.manual}));
+  S.pto=pt.data;S.holidays=ho.data;render()}
+async function act(fn,ok){try{const r=await fn();if(r&&r.error)throw r.error;if(ok)toast(ok);await load();return r||true}
+  catch(e){console.warn(e);toast(t("err"));return false}}
+
+// ---- render ----
+function statsHtml(uid){const ws=weekStart(),pu=punchesOf(uid),y=String(new Date().getFullYear());
+  const left=(+(S.people[uid]||{}).pto_allowance||0)-ptoUsed(ptoOf(uid),y);
+  return [[t("today"),hoursIn(pu,dayStart(),dayStart()+DAY)],[t("thisWeek"),hoursIn(pu,ws,ws+7*DAY)],[t("ptoLeft"),left]]
+   .map(([l,v])=>`<div class="stat"><b>${fh(v)}</b><span>${esc(l)} (${t("hrs")})</span></div>`).join("")}
+function shiftRows(list,canDel){const done=list.filter(p=>p.out);if(!done.length)return `<p class="empty">${t("noShifts")}</p>`;
+  return done.map(p=>`<li><div class="main"><b>${esc(fday(p.in))}</b><div class="sub">${ftime(p.in)} – ${ftime(p.out)}${p.manual?" ✎":""}</div></div>
+   <span class="num">${fh((p.out-p.in)/36e5)}</span>${canDel?`<button class="small danger" data-act="delpunch" data-id="${p.id}">${t("del")}</button>`:""}</li>`).join("")}
+function ptoRows(list,mode){if(!list.length)return mode==="admin"?`<p class="empty">${t("noPto")}</p>`:"";
+  return list.slice(0,mode==="admin"?60:6).map(p=>{let btns="";
+   if(p.status==="pending")btns=mode==="admin"
+     ?`<button class="small" data-act="ptoset" data-s="approved" data-id="${p.id}">${t("approve")}</button><button class="small danger" data-act="ptoset" data-s="denied" data-id="${p.id}">${t("deny")}</button>`
+     :`<button class="small" data-act="ptocancel" data-id="${p.id}">${t("cancel")}</button>`;
+   return `<li><div class="main"><b>${esc(fday(p.day+"T00:00"))}</b> <span class="num">· ${fh(+p.hours)} ${t("hrs")}</span>
+     <div class="sub">${esc(p.note)}</div></div><span class="pill ${esc(p.status)}">${t(p.status)}</span><div class="row-btns">${btns}</div></li>`}).join("")}
+
+function render(){if(!S.me)return;show("app");
+  document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.v===S.view)));
+  const open=openOf(S.me),b=$("btn-punch");
+  b.textContent=open?t("clockOut"):t("clockIn");b.className="big "+(open?"out":"in");b.disabled=S.busy;
+  $("clk-hello").textContent=t("hello",{n:(S.profile&&S.profile.full_name)||""});
+  tick();
+  $("clk-stats").innerHTML=statsHtml(S.me);
+  $("pto-list").innerHTML=ptoRows(ptoOf(S.me),"me");
+  $("hist").innerHTML=shiftRows(punchesOf(S.me).slice(0,11),false);
+  const longDay=d=>new Date(d+"T00:00").toLocaleDateString(loc(),{weekday:"long",month:"long",day:"numeric"});
+  const nx=S.holidays[0],nn=$("hol-notice");nn.hidden=!nx;
+  if(nx){const n=daysUntil(nx.day);
+    nn.innerHTML=n===0?esc(t("offToday",{n:nx.name}))
+      :`<b>${n===1?"1":n}</b><div>${esc(t("nextOff",{n:nx.name}))}<div class="sub">${esc(n===1?t("tomorrow")+" · "+longDay(nx.day):longDay(nx.day)+" · "+n+" "+t("inDays"))}</div></div>`}
+  $("hol-list").innerHTML=S.holidays.length?S.holidays.map(h=>`<li><div class="main"><b>${esc(h.name)}</b><div class="sub">${esc(new Date(h.day+"T00:00").toLocaleDateString(loc(),{weekday:"long",month:"long",day:"numeric",year:"numeric"}))}</div></div>
+    <span class="pill approved">${t("dayOff")}</span>${S.admin?`<button class="small danger" data-act="delhol" data-id="${esc(h.day)}">${t("del")}</button>`:""}</li>`).join(""):`<p class="empty">${t("noHolidays")}</p>`;
+  $("f-hol").hidden=!S.admin;
+  if(S.admin)renderTeam()}
+
+function renderTeam(){const ids=Object.keys(S.people).sort((a,c)=>nameOf(a).localeCompare(nameOf(c))),ws=weekStart();
+  $("team-card").hidden=!!S.sel;$("detail").hidden=!S.sel;
+  $("team-list").innerHTML=ids.length>1||ids[0]!==S.me?ids.map(id=>{const pu=punchesOf(id),on=openOf(id),pend=ptoOf(id).filter(p=>p.status==="pending").length,adm=S.people[id].role==="admin";
+    return `<li data-act="open" data-id="${esc(id)}" tabindex="0" role="button"><div class="main"><b>${esc(nameOf(id))}</b>${adm?` <span class="pill">${t("admin")}</span>`:""}
+     <div class="sub">${t("thisWeek")}: <span class="num">${fh(hoursIn(pu,ws,ws+7*DAY))}</span> · ${t("lastWeek")}: <span class="num">${fh(hoursIn(pu,ws-7*DAY,ws))}</span>
+     ${pend?` · <span class="pill pending">${esc(t("pendingN",{n:pend}))}</span>`:""}</div></div>
+     <span class="pill ${on?"on":""}">${on?t("in"):t("out")}</span></li>`}).join(""):`<p class="empty">${t("emptyTeam")}</p>`;
+  if(!S.sel)return;
+  const p=S.people[S.sel];if(!p){S.sel=null;return renderTeam()}
+  const on=openOf(S.sel);
+  $("d-name").textContent=nameOf(S.sel);$("d-email").textContent=p.email||"";
+  $("d-status").innerHTML=`<span class="pill ${on?"on":""}">${on?t("in"):t("out")}</span>${on?`<span>${esc(t("onSince",{t:ftime(on.in),d:dur(Date.now()-on.in)}))}</span>
+    <button class="small danger" data-act="forceout">${t("forceOut")}</button>`:""}`;
+  $("d-stats").innerHTML=statsHtml(S.sel);
+  $("d-role").innerHTML=S.sel===S.me?"":`<button class="small" data-act="role">${p.role==="admin"?t("makeEmp"):t("makeAdmin")}</button>`;
+  $("d-pto").innerHTML=ptoRows(ptoOf(S.sel),"admin");
+  $("d-shifts").innerHTML=shiftRows(punchesOf(S.sel),true)}
+
+function tick(){const n=new Date();$("clk-now").textContent=n.toLocaleTimeString(loc(),{hour:"numeric",minute:"2-digit"});
+  $("clk-date").textContent=n.toLocaleDateString(loc(),{weekday:"long",month:"long",day:"numeric"});
+  const on=S.me&&openOf(S.me);$("clk-status").textContent=on?t("onSince",{t:ftime(on.in),d:dur(Date.now()-on.in)}):t("off")}
+setInterval(()=>{if(S.me){tick();if(S.admin&&S.view==="team")renderTeam()}},30000);
+setInterval(()=>{if(S.me&&!document.hidden)load().catch(console.warn)},120000);
+document.addEventListener("visibilitychange",()=>{if(S.me&&!document.hidden)load().catch(console.warn)});
+
+function arm(btn){if(btn.classList.contains("armed"))return true;btn.classList.add("armed");btn.textContent=t("sure");
+  setTimeout(()=>{btn.classList.remove("armed");btn.textContent=t("del")},3000);return false}
+
+async function punch(target){S.busy=true;render();
+  const r=await act(()=>sb.rpc("punch",target?{target}:{}));
+  if(r&&r.data)toast(target?t("saved"):t(r.data==="in"?"punchedIn":"punchedOut",{t:ftime(Date.now())}));
+  S.busy=false;render()}
+
+document.addEventListener("click",ev=>{const b=ev.target.closest("[data-act]");if(!b)return;const a=b.dataset.act,id=b.dataset.id;
+  if(a==="lang"){lang=lang==="en"?"es":"en";try{localStorage.setItem("tc-lang",lang)}catch(e){}applyLang()}
+  else if(a==="mode"){S.mode=b.dataset.m;$("a-note").textContent="";renderAuth()}
+  else if(a==="signout")sb.auth.signOut();
+  else if(a==="tab"){S.view=b.dataset.v;S.sel=null;render()}
+  else if(a==="punch"&&!S.busy)punch(null);
+  else if(a==="open"){S.sel=id;$("allow").value=S.people[id].pto_allowance||0;$("sh-date").value=isoDay();render();scrollTo(0,0)}
+  else if(a==="back"){S.sel=null;render()}
+  else if(a==="forceout")punch(S.sel);
+  else if(a==="role")act(()=>sb.from("profiles").update({role:S.people[S.sel].role==="admin"?"employee":"admin"}).eq("id",S.sel),t("saved"));
+  else if(a==="ptoset")act(()=>sb.from("pto_requests").update({status:b.dataset.s,decided_by:S.me}).eq("id",id),t("saved"));
+  else if(a==="ptocancel")act(()=>sb.from("pto_requests").delete().eq("id",id));
+  else if(a==="delpunch"&&arm(b))act(()=>sb.from("punches").delete().eq("id",id),t("saved"));
+  else if(a==="delhol"&&arm(b))act(()=>sb.from("holidays").delete().eq("day",id),t("saved"))});
+document.addEventListener("keydown",ev=>{if(ev.key==="Enter"&&ev.target.matches("li[data-act]"))ev.target.click()});
+
+$("f-pto").addEventListener("submit",async ev=>{ev.preventDefault();
+  const ok=await act(()=>sb.from("pto_requests").insert({day:$("pto-date").value,hours:+$("pto-hours").value,note:$("pto-note").value.trim()||null}),t("sent"));
+  if(ok){$("pto-note").value="";$("pto-date").value=""}});
+$("f-allow").addEventListener("submit",ev=>{ev.preventDefault();act(()=>sb.from("profiles").update({pto_allowance:+$("allow").value}).eq("id",S.sel),t("saved"))});
+$("f-hol").addEventListener("submit",async ev=>{ev.preventDefault();
+  if(await act(()=>sb.from("holidays").upsert({day:$("hol-date").value,name:$("hol-name").value.trim()}),t("saved"))){$("hol-name").value="";$("hol-date").value=""}});
+$("f-shift").addEventListener("submit",ev=>{ev.preventDefault();
+  const d=$("sh-date").value,i=new Date(d+"T"+$("sh-in").value),o=new Date(d+"T"+$("sh-out").value);
+  if(o<=i)o.setDate(o.getDate()+1);// overnight shift
+  if(o-i>16*36e5)return toast(t("badShift"));
+  act(()=>sb.from("punches").insert({user_id:S.sel,clock_in:i.toISOString(),clock_out:o.toISOString(),manual:true}),t("saved"))});
+
+async function start(){const{data:{session}}=await sb.auth.getSession();
+  if(!session){S.me=null;show("auth");renderAuth();return}
+  S.me=session.user.id;
+  try{await load()}catch(e){console.warn(e);$("msg").textContent=t("err");show("msg")}}
+sb.auth.onAuthStateChange((evt)=>{
+  if(evt==="PASSWORD_RECOVERY"){S.mode="newpass";S.me=null;show("auth");renderAuth()}
+  else if(evt==="SIGNED_OUT"){S.me=null;S.view="clock";S.sel=null;S.mode="signin";show("auth");renderAuth()}
+  else if(evt==="SIGNED_IN"&&!S.me&&S.mode!=="newpass")setTimeout(start)});
+applyLang();start();
+</script>
+</body>
+</html>
