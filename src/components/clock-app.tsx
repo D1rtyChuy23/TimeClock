@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { CalendarOff, ChevronLeft, ChevronRight, PenLine } from "lucide-react";
 import { toast } from "sonner";
 import { UserButton } from "@/lib/auth/gates";
+import { PTO_NEXT, canPto, nextLoad, ptoActions, shiftAction, type LoadStatus } from "@/lib/clock-machine";
 import { errorCopyKey, useI18n, type CopyKey, type Lang } from "@/lib/i18n";
 import { addDays, daysUntil, fmtHms, fmtHours, hoursIn, ptoUsed, selfCheck, weekStart } from "@/lib/time";
 import {
@@ -21,6 +22,7 @@ import {
   type Holiday,
   type OffDay,
   type Profile,
+  type PtoRequest,
   type Punch,
   type Snapshot,
 } from "@/lib/timeclock.functions";
@@ -79,21 +81,40 @@ const solid =
 const ghost =
   "inline-flex h-11 items-center justify-center rounded-lg border border-line bg-card px-3 text-sm font-medium text-ink disabled:opacity-60";
 
+/** Runs one save. Resolves true when it worked; a save already in flight makes it a no-op (false). */
+type Act = (fn: () => Promise<ClockResult>, okKey: CopyKey) => Promise<boolean>;
+
+/** Screen machine (clock-machine.ts) plus the data it shows. `snap` is set once status has been `ready`. */
+type Screen = { status: LoadStatus; snap: Snapshot | null };
+type ScreenEvent = { type: "LOADED"; snap: Snapshot } | { type: "FAILED" };
+
+function screenReducer(screen: Screen, event: ScreenEvent): Screen {
+  return {
+    status: nextLoad(screen.status, event.type),
+    snap: event.type === "LOADED" ? event.snap : screen.snap,
+  };
+}
+
 export function ClockApp() {
   const { t, lang, setLang } = useI18n();
-  const [snap, setSnap] = useState<Snapshot | null>(null);
-  const [loadError, setLoadError] = useState(false);
+  const [{ status, snap }, send] = useReducer(screenReducer, { status: "booting", snap: null });
   const [tab, setTab] = useState<"mine" | "team">("mine");
   const [busy, setBusy] = useState(false);
+  // Refs, because two taps can land before React re-renders with `busy` set.
+  const saving = useRef(false);
+  // Bumped by every load and save: an answer that is no longer the newest request is dropped,
+  // so a slow background refresh can never paint over the result of a save.
+  const latest = useRef(0);
   const now = useServerNow(snap?.serverNow);
 
   const reload = useCallback(async () => {
+    if (saving.current) return;
+    const ticket = ++latest.current;
     try {
       const data = await loadClock();
-      setSnap(data);
-      setLoadError(false);
+      if (ticket === latest.current) send({ type: "LOADED", snap: data });
     } catch {
-      setLoadError(true);
+      if (ticket === latest.current) send({ type: "FAILED" });
     }
   }, []);
 
@@ -117,25 +138,44 @@ export function ClockApp() {
     };
   }, [reload]);
 
-  async function act(fn: () => Promise<ClockResult>, okKey: CopyKey) {
+  const act: Act = async (fn, okKey) => {
+    if (saving.current) return false;
+    saving.current = true;
     setBusy(true);
+    const ticket = ++latest.current;
+    let ok = false;
     try {
       const res = await fn();
-      if (!res.ok) {
+      if (res.ok) {
+        if (ticket === latest.current) send({ type: "LOADED", snap: res.data });
+        toast.success(t(okKey));
+        ok = true;
+      } else {
         toast.error(t(errorCopyKey(res.error)));
-        return;
       }
-      setSnap(res.data);
-      toast.success(t(okKey));
     } catch {
       toast.error(t("errGeneric"));
     } finally {
+      saving.current = false;
       setBusy(false);
     }
-  }
+    // A refused save usually means this screen was behind: show what is true now.
+    if (!ok) void reload();
+    return ok;
+  };
+
+  const onClock = snap ? snap.punches.some((p) => p.userId === snap.me.userId && !p.clockOut) : false;
 
   return (
-    <div className="min-h-screen pb-16">
+    <div
+      className="min-h-screen pb-16"
+      // Live state for tests and agents: wait on these instead of sleeping.
+      data-status={status}
+      data-busy={busy}
+      data-tab={snap?.me.role === "admin" ? tab : "mine"}
+      data-role={snap?.me.role}
+      data-shift={snap ? (onClock ? "in" : "out") : undefined}
+    >
       <header className="sticky top-0 z-20 border-b border-line bg-paper">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
           <p className="font-display text-3xl font-bold uppercase leading-none tracking-wide">{t("appName")}</p>
@@ -157,18 +197,29 @@ export function ClockApp() {
               ))}
             </div>
             <div className="account-slot">
-              <UserButton />
+              <UserButton labels={{ signOut: t("signOut"), signingOut: t("signingOut") }} />
             </div>
           </div>
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-3xl px-4 pt-4">
-        {!snap && !loadError ? <p className="text-muted">{t("boot")}</p> : null}
-        {loadError ? (
-          <div className="rounded-2xl border border-line bg-card p-4">
+        {status === "booting" ? <p className="text-muted">{t("boot")}</p> : null}
+        {status === "failed" ? (
+          <div className="rounded-2xl border border-line bg-card p-4" role="alert">
             <p>{t("loadError")}</p>
             <button type="button" className={"mt-3 " + solid} onClick={() => void reload()}>
+              {t("retry")}
+            </button>
+          </div>
+        ) : null}
+        {status === "stale" ? (
+          <div
+            className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3 py-2"
+            role="status"
+          >
+            <p className="text-sm font-medium">{t("staleNotice")}</p>
+            <button type="button" className={ghost} onClick={() => void reload()}>
               {t("retry")}
             </button>
           </div>
@@ -237,7 +288,7 @@ function Mine({
   snap: Snapshot;
   now: Date;
   busy: boolean;
-  act: (fn: () => Promise<ClockResult>, okKey: CopyKey) => Promise<void>;
+  act: Act;
 }) {
   const { t, lang } = useI18n();
   const mine = snap.punches.filter((p) => p.userId === snap.me.userId);
@@ -267,7 +318,7 @@ function Mine({
           aria-busy={busy}
           onClick={() =>
             void act(
-              () => togglePunch({ data: { targetUserId: "" } }),
+              () => togglePunch({ data: { targetUserId: "", action: shiftAction(!!open) } }),
               open ? "clockedOut" : "clockedIn",
             )
           }
@@ -381,9 +432,9 @@ function HolidayBanner({ holidays, now }: { holidays: Holiday[]; now: Date }) {
   );
 }
 
-function canCancelOwn(status: string, day: string, now: Date): boolean {
-  if (status === "pending") return true;
-  return status === "approved" && daysUntil(day, now) >= 0;
+/** May the person who asked for this day off still cancel it? (Time-off machine, clock-machine.ts.) */
+function canCancelOwn(status: PtoRequest["status"], day: string, now: Date): boolean {
+  return canPto("cancel", status, { owner: true, admin: false, daysUntil: daysUntil(day, now) });
 }
 
 function PtoPanel({
@@ -397,7 +448,7 @@ function PtoPanel({
   snap: Snapshot;
   now: Date;
   busy: boolean;
-  act: (fn: () => Promise<ClockResult>, okKey: CopyKey) => Promise<void>;
+  act: Act;
   day: string;
   setDay: (day: string) => void;
 }) {
@@ -418,7 +469,9 @@ function PtoPanel({
         className="mt-3 space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
-          void act(() => requestPto({ data: { day, hours: Number(hours), note } }), "sent").then(() => setNote(""));
+          void act(() => requestPto({ data: { day, hours: Number(hours), note } }), "sent").then((ok) => {
+            if (ok) setNote("");
+          });
         }}
       >
         <div className="grid grid-cols-2 gap-2">
@@ -528,7 +581,7 @@ function TeamCalendar({
   snap: Snapshot;
   now: Date;
   busy: boolean;
-  act: (fn: () => Promise<ClockResult>, okKey: CopyKey) => Promise<void>;
+  act: Act;
   focusDay: string;
   onPick: (day: string) => void;
 }) {
@@ -724,9 +777,9 @@ function TeamCalendar({
           className="mt-4 space-y-3 border-t border-line pt-4"
           onSubmit={(e) => {
             e.preventDefault();
-            void act(() => addHoliday({ data: { day: focusDay, name: holidayName } }), "saved").then(() =>
-              setHolidayName(""),
-            );
+            void act(() => addHoliday({ data: { day: focusDay, name: holidayName } }), "saved").then((ok) => {
+              if (ok) setHolidayName("");
+            });
           }}
         >
           <p className="text-sm font-medium">{t("addHoliday")}</p>
@@ -817,7 +870,7 @@ function TeamPanel({
   snap: Snapshot;
   now: Date;
   busy: boolean;
-  act: (fn: () => Promise<ClockResult>, okKey: CopyKey) => Promise<void>;
+  act: Act;
 }) {
   const { t } = useI18n();
   const openIds = new Set(snap.punches.filter((p) => !p.clockOut).map((p) => p.userId));
@@ -855,7 +908,7 @@ function PersonCard({
   snap: Snapshot;
   now: Date;
   busy: boolean;
-  act: (fn: () => Promise<ClockResult>, okKey: CopyKey) => Promise<void>;
+  act: Act;
 }) {
   const { t, lang } = useI18n();
   const [open, setOpen] = useState(false);
@@ -969,26 +1022,22 @@ function PersonCard({
                     {fmtDay(r.day, lang)} · {fmtHours(r.hours)} {t("hours")} · {t(r.status)}
                   </p>
                   {r.note ? <p className="text-sm text-pretty">{r.note}</p> : null}
-                  {r.status === "pending" ? (
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        type="button"
-                        className={solid}
-                        disabled={busy}
-                        onClick={() => void act(() => decidePto({ data: { id: r.id, status: "approved" } }), "updated")}
-                      >
-                        {t("approve")}
-                      </button>
-                      <button
-                        type="button"
-                        className={ghost}
-                        disabled={busy}
-                        onClick={() => void act(() => decidePto({ data: { id: r.id, status: "denied" } }), "updated")}
-                      >
-                        {t("deny")}
-                      </button>
-                    </div>
-                  ) : null}
+                  <div className="mt-2 flex gap-2">
+                    {ptoActions(r.status, { owner: false, admin: true, daysUntil: 0 }).map((a) =>
+                      a === "cancel" ? null : (
+                        <button
+                          key={a}
+                          type="button"
+                          data-action={a}
+                          className={a === "approve" ? solid : ghost}
+                          disabled={busy}
+                          onClick={() => void act(() => decidePto({ data: { id: r.id, status: PTO_NEXT[a] } }), "updated")}
+                        >
+                          {t(a)}
+                        </button>
+                      ),
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
