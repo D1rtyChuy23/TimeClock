@@ -82,6 +82,7 @@ li .sub{font-size:14px;color:var(--muted)}
 .notice .sub{font-weight:400}
 .msg{padding:28px 16px;text-align:center;color:var(--muted)}
 #toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:10px 18px;border-radius:99px;font-weight:600;max-width:calc(100% - 32px);text-align:center}
+body[data-busy="saving"] button{cursor:progress}
 @media (max-width:420px){.now{font-size:46px}.stat b{font-size:24px}}
 @media (prefers-reduced-motion:no-preference){.big{transition:transform .08s}.big:active{transform:scale(.98)}}
 </style>
@@ -97,6 +98,18 @@ li .sub{font-size:14px;color:var(--muted)}
   </header>
 
   <p class="msg" id="msg" data-t="loading"></p>
+
+  <!-- first load failed -->
+  <section id="v-error" class="card auth" role="alert" hidden>
+    <h2 data-t="cantLoadH"></h2>
+    <p class="note" data-t="cantLoad"></p>
+    <div class="row-btns" style="margin-top:14px">
+      <button class="primary" data-act="retry" data-t="retry"></button>
+      <button data-act="signout" data-t="signOut"></button>
+    </div>
+  </section>
+
+  <div class="notice" id="sync-notice" role="status" data-t="stale" hidden></div>
 
   <!-- sign in / sign up / reset -->
   <section id="v-auth" class="card auth" hidden>
@@ -191,7 +204,7 @@ li .sub{font-size:14px;color:var(--muted)}
     </div>
   </section>
 </div>
-<div id="toast" hidden></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.113.0/dist/umd/supabase.js"></script>
 <script>
@@ -224,7 +237,11 @@ en:{title:"Time Clock",other:"Español",loading:"Loading…",myClock:"My clock",
  saved:"Saved",sent:"Request sent",punchedIn:"Clocked in at {t}",punchedOut:"Clocked out at {t}",
  err:"That didn't save. Check your connection and try again.",badShift:"End time must be after start time.",
  badLogin:"Email or password is wrong, or the email isn't confirmed yet.",
- dayOff:"Day off",offToday:"Today is {n}. We're off, enjoy the day!",nextOff:"Next day off: {n}",inDays:"days",tomorrow:"Tomorrow"},
+ dayOff:"Day off",offToday:"Today is {n}. We're off, enjoy the day!",nextOff:"Next day off: {n}",inDays:"days",tomorrow:"Tomorrow",
+ cantLoadH:"Can't reach the time clock",cantLoad:"Check your internet connection and try again. If it keeps happening, tell your manager.",retry:"Try again",
+ offline:"Can't reach the time clock. Check your internet connection and try again.",stale:"No connection. This may be out of date.",
+ confirmFirst:"Confirm your email first: open the email we sent you and tap the link.",
+ alreadyIn:"You were already clocked in.",alreadyOut:"You were already clocked out.",undo:"Undo"},
 es:{title:"Reloj de Tiempo",other:"English",loading:"Cargando…",myClock:"Mi reloj",team:"Equipo",signOut:"Salir",
  signIn:"Iniciar sesión",signUp:"Crear cuenta",resetH:"Restablecer contraseña",newPassH:"Elige una contraseña nueva",
  fullName:"Nombre completo",email:"Correo electrónico",password:"Contraseña (8+ caracteres)",
@@ -247,7 +264,11 @@ es:{title:"Reloj de Tiempo",other:"English",loading:"Cargando…",myClock:"Mi re
  saved:"Guardado",sent:"Solicitud enviada",punchedIn:"Entrada a las {t}",punchedOut:"Salida a las {t}",
  err:"No se guardó. Revisa tu conexión e intenta otra vez.",badShift:"La salida debe ser después de la entrada.",
  badLogin:"El correo o la contraseña no son correctos, o el correo aún no está confirmado.",
- dayOff:"Día libre",offToday:"Hoy es {n}. ¡No trabajamos, disfruta el día!",nextOff:"Próximo día libre: {n}",inDays:"días",tomorrow:"Mañana"}};
+ dayOff:"Día libre",offToday:"Hoy es {n}. ¡No trabajamos, disfruta el día!",nextOff:"Próximo día libre: {n}",inDays:"días",tomorrow:"Mañana",
+ cantLoadH:"No se puede conectar al reloj",cantLoad:"Revisa tu conexión a internet e intenta otra vez. Si sigue pasando, avisa a tu gerente.",retry:"Intentar otra vez",
+ offline:"No se puede conectar al reloj. Revisa tu conexión a internet e intenta otra vez.",stale:"Sin conexión. Esto puede no estar al día.",
+ confirmFirst:"Primero confirma tu correo: abre el correo que te enviamos y toca el enlace.",
+ alreadyIn:"Ya habías marcado entrada.",alreadyOut:"Ya habías marcado salida.",undo:"Deshacer"}};
 let lang;try{lang=localStorage.getItem("tc-lang")}catch(e){}
 if(!T[lang])lang=(navigator.language||"").startsWith("es")?"es":"en";
 const t=(k,v={})=>T[lang][k].replace(/\{(\w)\}/g,(_,x)=>v[x]);
@@ -255,7 +276,47 @@ const loc=()=>lang==="es"?"es-MX":"en-US";
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const S={me:null,profile:null,admin:false,people:{},punches:[],pto:[],holidays:[],view:"clock",sel:null,busy:false,mode:"signin"};
+// ---- State machines ----
+// Every flow in the app is one row here: state -> {EVENT: next state}. go() is the only code that changes
+// state; an event with no entry for the current state is ignored (and logged with console.debug).
+// The current states are mirrored on <body> as data-session, data-auth, data-nav, data-sync and data-busy
+// (plus data-role and data-shift), and on window.timeclock, so tests and agents can read them.
+const M={
+  // Who is using the page. booting: checking for a saved sign-in. recovering: arrived from a reset-password email.
+  session:{booting:{SIGNED_OUT:"signedOut",SIGNED_IN:"loading",RECOVERY:"recovering"},
+           signedOut:{SIGNED_IN:"loading",RECOVERY:"recovering"},
+           recovering:{PASSWORD_SET:"loading",SIGNED_OUT:"signedOut"},
+           loading:{LOADED:"ready",FAILED:"loadError",SIGNED_OUT:"signedOut",RECOVERY:"recovering"},
+           loadError:{RETRY:"loading",SIGNED_OUT:"signedOut"},
+           ready:{SIGNED_OUT:"signedOut",RECOVERY:"recovering"}},
+  // Which sign-in form is showing (while session is signedOut). recovering always shows the new-password form.
+  auth:{signin:{SIGNUP:"signup",RESET:"reset"},signup:{SIGNIN:"signin"},reset:{SIGNIN:"signin"}},
+  // Which screen is showing (while session is ready). team and person are admin only; S.sel is the open person.
+  nav:{clock:{TEAM:"team"},team:{CLOCK:"clock",OPEN:"person"},person:{BACK:"team",TEAM:"team",CLOCK:"clock"}},
+  // Whether the last background refresh worked. stale shows the "no connection" notice.
+  sync:{ok:{FAIL:"stale"},stale:{OK:"ok"}},
+  // One save at a time: a second tap or submit while saving is ignored.
+  busy:{idle:{START:"saving"},saving:{DONE:"idle"}}};
+// Two more machines live in the database, which has the final say; the page reads them and offers the allowed moves.
+//   shift: out --clock('in')--> in --clock('out')--> out    (RPC clock(action,target); one open shift per person)
+//   role:  employee <--> admin                               (admins only; the database refuses to remove the last admin)
+// Time-off request: who may do what in each status. ptoRows() draws exactly these buttons.
+const PTO={pending:{admin:["approved","denied"],me:["cancel"]},approved:{admin:["pending"],me:[]},denied:{admin:["pending"],me:[]}};
+for(const m in M)for(const s in M[m])for(const e in M[m][s])console.assert(M[m][M[m][s][e]],"transition to unknown state",m,s,e);
+
+const state={session:"booting",auth:"signin",nav:"clock",sync:"ok",busy:"idle"};
+// Data and context. armed: the delete button waiting for its second tap ("delpunch:12").
+const S={me:null,profile:null,admin:false,people:{},punches:[],pto:[],holidays:[],sel:null,armed:null};
+const ENTER={ // what happens on arriving in a state
+  "session.loading":()=>refresh(),
+  "session.signedOut":()=>{Object.assign(S,{me:null,profile:null,admin:false,people:{},punches:[],pto:[],holidays:[],sel:null,armed:null});
+    Object.assign(state,{auth:"signin",nav:"clock",sync:"ok"})}};
+function go(m,ev){const from=state[m],to=M[m][from][ev];
+  if(!to){console.debug(`[state] ${m}: ${ev} ignored in ${from}`);return false}
+  state[m]=to;console.debug(`[state] ${m}: ${from} -> ${to} (${ev})`);
+  if(ENTER[m+"."+to])ENTER[m+"."+to]();
+  render();return true}
+window.timeclock={machines:M,pto:PTO,state};
 
 // ---- pure helpers ----
 const DAY=864e5;
@@ -282,16 +343,14 @@ const ptoOf=uid=>S.pto.filter(p=>p.user_id===uid);
 const nameOf=uid=>(S.people[uid]&&S.people[uid].full_name)||(S.people[uid]&&S.people[uid].email)||"—";
 
 function toast(m){const el=$("toast");el.textContent=m;el.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>el.hidden=true,3200)}
-function show(view){$("msg").hidden=view!=="msg";$("v-auth").hidden=view!=="auth";
-  const app=view==="app";$("btn-out").hidden=!app;$("tabs").hidden=!(app&&S.admin);
-  $("v-clock").hidden=!(app&&S.view==="clock");$("v-team").hidden=!(app&&S.view==="team")}
-
 function applyLang(){document.documentElement.lang=lang;
   document.querySelectorAll("[data-t]").forEach(el=>el.textContent=t(el.dataset.t));
-  $("btn-lang").textContent=T[lang].other;renderAuth();if(S.me)render()}
+  $("btn-lang").textContent=T[lang].other;render()}
 
 // ---- auth ----
-function renderAuth(){const m=S.mode;
+const authMode=()=>state.session==="recovering"?"newpass":state.auth;
+const note=m=>$("a-note").textContent=m;
+function renderAuth(){const m=authMode();
   $("auth-h").textContent=t({signin:"signIn",signup:"signUp",reset:"resetH",newpass:"newPassH"}[m]);
   $("a-submit").textContent=t({signin:"signIn",signup:"signUp",reset:"sendLink",newpass:"setPass"}[m]);
   $("lbl-name").hidden=m!=="signup";$("lbl-email").hidden=m==="newpass";$("lbl-pass").hidden=m==="reset";
@@ -299,54 +358,77 @@ function renderAuth(){const m=S.mode;
   $("a-pass").autocomplete=m==="signin"?"current-password":"new-password";
   $("sw-signup").hidden=m!=="signin";$("sw-signin").hidden=m==="signin";$("sw-reset").hidden=m!=="signin"}
 $("f-auth").addEventListener("submit",async ev=>{ev.preventDefault();
-  const email=$("a-email").value.trim(),pass=$("a-pass").value,btn=$("a-submit");btn.disabled=true;$("a-note").textContent="";
+  const mode=authMode(),email=$("a-email").value.trim(),pass=$("a-pass").value,btn=$("a-submit"),to=location.origin+location.pathname;
+  const down=e=>!e.status||e.status>=500; // no answer from the server: say so instead of blaming the password
+  const fail=e=>note(down(e)?t("offline"):e.code==="email_not_confirmed"?t("confirmFirst"):mode==="signin"&&e.status<429?t("badLogin"):e.message);
+  btn.disabled=true;note("");
   try{
-    if(S.mode==="signin"){const{error}=await sb.auth.signInWithPassword({email,password:pass});if(error)$("a-note").textContent=t("badLogin")}
-    else if(S.mode==="signup"){const{data,error}=await sb.auth.signUp({email,password:pass,
-        options:{data:{full_name:$("a-name").value.trim()},emailRedirectTo:location.origin+location.pathname}});
-      if(error)$("a-note").textContent=error.message;else if(!data.session)$("a-note").textContent=t("checkEmail")}
-    else if(S.mode==="reset"){await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});$("a-note").textContent=t("linkSent")}
-    else if(S.mode==="newpass"){const{error}=await sb.auth.updateUser({password:pass});
-      if(error)$("a-note").textContent=error.message;else{toast(t("passSaved"));S.mode="signin";start()}}
-  }catch(e){$("a-note").textContent=t("err")}
+    if(mode==="signin"){const{error}=await sb.auth.signInWithPassword({email,password:pass});if(error)fail(error)}
+    else if(mode==="signup"){const{data,error}=await sb.auth.signUp({email,password:pass,options:{data:{full_name:$("a-name").value.trim()},emailRedirectTo:to}});
+      if(error)fail(error);else if(!data.session){go("auth","SIGNIN");note(t("checkEmail"))}}
+    else if(mode==="reset"){const{error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:to});
+      if(error&&down(error))fail(error);else{go("auth","SIGNIN");note(t("linkSent"))}}
+    else{const{error}=await sb.auth.updateUser({password:pass});
+      if(error)fail(error);else{toast(t("passSaved"));go("session","PASSWORD_SET")}}
+  }catch(e){note(t("offline"))}
   btn.disabled=false});
 
 // ---- data ----
 async function load(){
-  const since=new Date(Date.now()-90*DAY).toISOString();
+  const me=S.me,since=new Date(Date.now()-90*DAY).toISOString();
   const [pr,pu,pt,ho]=await Promise.all([
     sb.from("profiles").select("id,full_name,email,role,pto_allowance"),
     sb.from("punches").select("id,user_id,clock_in,clock_out,manual").gte("clock_in",since).order("clock_in",{ascending:false}).limit(5000),
     sb.from("pto_requests").select("id,user_id,day,hours,note,status").order("day",{ascending:false}),
     sb.from("holidays").select("day,name").gte("day",isoDay()).order("day")]);
   const err=pr.error||pu.error||pt.error||ho.error;if(err)throw err;
+  if(S.me!==me)return; // signed out or switched account while loading: drop this answer
   S.people={};pr.data.forEach(p=>S.people[p.id]=p);
-  S.profile=S.people[S.me];S.admin=S.profile&&S.profile.role==="admin";
+  S.profile=S.people[S.me];S.admin=!!(S.profile&&S.profile.role==="admin");
   S.punches=pu.data.map(p=>({id:p.id,uid:p.user_id,in:Date.parse(p.clock_in),out:p.clock_out?Date.parse(p.clock_out):null,manual:p.manual}));
-  S.pto=pt.data;S.holidays=ho.data;render()}
-async function act(fn,ok){try{const r=await fn();if(r&&r.error)throw r.error;if(ok)toast(ok);await load();return r||true}
-  catch(e){console.warn(e);toast(t("err"));return false}}
+  S.pto=pt.data;S.holidays=ho.data}
+// The only caller of load(): sends the outcome to the right machine. First load failing is a full-screen
+// error with a retry; a later refresh failing keeps the last data on screen and shows the "no connection" notice.
+async function refresh(){
+  try{await load();go("sync","OK");if(!S.admin)go("nav","CLOCK");go("session","LOADED")}
+  catch(e){console.warn(e);if(state.session==="loading")go("session","FAILED");else go("sync","FAIL")}
+  render()}
+async function act(fn,ok){if(!go("busy","START"))return false;
+  try{const r=await fn();if(r&&r.error)throw r.error;if(ok)toast(ok);await refresh();return r||true}
+  catch(e){console.warn(e);toast(t("err"));return false}
+  finally{go("busy","DONE")}}
+// Says which way to go instead of toggling, so a stale screen or a second device can never flip the wrong way.
+async function clock(action,target){const r=await act(()=>sb.rpc("clock",target?{action,target}:{action}));
+  if(r&&r.data)toast(target?t("saved"):t({in:"punchedIn",out:"punchedOut",already_in:"alreadyIn",already_out:"alreadyOut"}[r.data]||"saved",{t:ftime(Date.now())}))}
 
 // ---- render ----
 function statsHtml(uid){const ws=weekStart(),pu=punchesOf(uid),y=String(new Date().getFullYear());
   const left=(+(S.people[uid]||{}).pto_allowance||0)-ptoUsed(ptoOf(uid),y);
   return [[t("today"),hoursIn(pu,dayStart(),dayStart()+DAY)],[t("thisWeek"),hoursIn(pu,ws,ws+7*DAY)],[t("ptoLeft"),left]]
    .map(([l,v])=>`<div class="stat"><b>${fh(v)}</b><span>${esc(l)} (${t("hrs")})</span></div>`).join("")}
+const delBtn=(a,id)=>{const on=S.armed===a+":"+id;return `<button class="small danger${on?" armed":""}" data-act="${a}" data-id="${esc(id)}">${t(on?"sure":"del")}</button>`};
 function shiftRows(list,canDel){const done=list.filter(p=>p.out);if(!done.length)return `<p class="empty">${t("noShifts")}</p>`;
   return done.map(p=>`<li><div class="main"><b>${esc(fday(p.in))}</b><div class="sub">${ftime(p.in)} – ${ftime(p.out)}${p.manual?" ✎":""}</div></div>
-   <span class="num">${fh((p.out-p.in)/36e5)}</span>${canDel?`<button class="small danger" data-act="delpunch" data-id="${p.id}">${t("del")}</button>`:""}</li>`).join("")}
+   <span class="num">${fh((p.out-p.in)/36e5)}</span>${canDel?delBtn("delpunch",p.id):""}</li>`).join("")}
+const PTO_LABEL={approved:"approve",denied:"deny",pending:"undo",cancel:"cancel"};
 function ptoRows(list,mode){if(!list.length)return mode==="admin"?`<p class="empty">${t("noPto")}</p>`:"";
-  return list.slice(0,mode==="admin"?60:6).map(p=>{let btns="";
-   if(p.status==="pending")btns=mode==="admin"
-     ?`<button class="small" data-act="ptoset" data-s="approved" data-id="${p.id}">${t("approve")}</button><button class="small danger" data-act="ptoset" data-s="denied" data-id="${p.id}">${t("deny")}</button>`
-     :`<button class="small" data-act="ptocancel" data-id="${p.id}">${t("cancel")}</button>`;
+  return list.slice(0,mode==="admin"?60:6).map(p=>{
+   const btns=((PTO[p.status]||{})[mode]||[]).map(a=>`<button class="small${a==="denied"?" danger":""}" data-act="${a==="cancel"?"ptocancel":"ptoset"}" data-s="${a}" data-id="${p.id}">${t(PTO_LABEL[a])}</button>`).join("");
    return `<li><div class="main"><b>${esc(fday(p.day+"T00:00"))}</b> <span class="num">· ${fh(+p.hours)} ${t("hrs")}</span>
      <div class="sub">${esc(p.note)}</div></div><span class="pill ${esc(p.status)}">${t(p.status)}</span><div class="row-btns">${btns}</div></li>`}).join("")}
 
-function render(){if(!S.me)return;show("app");
-  document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.v===S.view)));
+// Draws the whole page from the machines: which screen shows depends only on `state`.
+function render(){const s=state.session,app=s==="ready";
+  Object.assign(document.body.dataset,state,{role:app?(S.admin?"admin":"employee"):"",shift:app?(openOf(S.me)?"in":"out"):""});
+  $("msg").hidden=!(s==="booting"||s==="loading");$("v-auth").hidden=!(s==="signedOut"||s==="recovering");$("v-error").hidden=s!=="loadError";
+  $("btn-out").hidden=!app;$("tabs").hidden=!(app&&S.admin);$("sync-notice").hidden=!(app&&state.sync==="stale");
+  $("v-clock").hidden=!(app&&state.nav==="clock");$("v-team").hidden=!(app&&state.nav!=="clock");
+  renderAuth();if(app)renderApp()}
+
+function renderApp(){
+  document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.v===(state.nav==="clock"?"clock":"team"))));
   const open=openOf(S.me),b=$("btn-punch");
-  b.textContent=open?t("clockOut"):t("clockIn");b.className="big "+(open?"out":"in");b.disabled=S.busy;
+  b.textContent=open?t("clockOut"):t("clockIn");b.className="big "+(open?"out":"in");b.disabled=state.busy==="saving";
   $("clk-hello").textContent=t("hello",{n:(S.profile&&S.profile.full_name)||""});
   tick();
   $("clk-stats").innerHTML=statsHtml(S.me);
@@ -358,19 +440,19 @@ function render(){if(!S.me)return;show("app");
     nn.innerHTML=n===0?esc(t("offToday",{n:nx.name}))
       :`<b>${n===1?"1":n}</b><div>${esc(t("nextOff",{n:nx.name}))}<div class="sub">${esc(n===1?t("tomorrow")+" · "+longDay(nx.day):longDay(nx.day)+" · "+n+" "+t("inDays"))}</div></div>`}
   $("hol-list").innerHTML=S.holidays.length?S.holidays.map(h=>`<li><div class="main"><b>${esc(h.name)}</b><div class="sub">${esc(new Date(h.day+"T00:00").toLocaleDateString(loc(),{weekday:"long",month:"long",day:"numeric",year:"numeric"}))}</div></div>
-    <span class="pill approved">${t("dayOff")}</span>${S.admin?`<button class="small danger" data-act="delhol" data-id="${esc(h.day)}">${t("del")}</button>`:""}</li>`).join(""):`<p class="empty">${t("noHolidays")}</p>`;
+    <span class="pill approved">${t("dayOff")}</span>${S.admin?delBtn("delhol",h.day):""}</li>`).join(""):`<p class="empty">${t("noHolidays")}</p>`;
   $("f-hol").hidden=!S.admin;
   if(S.admin)renderTeam()}
 
-function renderTeam(){const ids=Object.keys(S.people).sort((a,c)=>nameOf(a).localeCompare(nameOf(c))),ws=weekStart();
-  $("team-card").hidden=!!S.sel;$("detail").hidden=!S.sel;
+function renderTeam(){const ids=Object.keys(S.people).sort((a,c)=>nameOf(a).localeCompare(nameOf(c))),ws=weekStart(),person=state.nav==="person";
+  $("team-card").hidden=person;$("detail").hidden=!person;
   $("team-list").innerHTML=ids.length>1||ids[0]!==S.me?ids.map(id=>{const pu=punchesOf(id),on=openOf(id),pend=ptoOf(id).filter(p=>p.status==="pending").length,adm=S.people[id].role==="admin";
     return `<li data-act="open" data-id="${esc(id)}" tabindex="0" role="button"><div class="main"><b>${esc(nameOf(id))}</b>${adm?` <span class="pill">${t("admin")}</span>`:""}
      <div class="sub">${t("thisWeek")}: <span class="num">${fh(hoursIn(pu,ws,ws+7*DAY))}</span> · ${t("lastWeek")}: <span class="num">${fh(hoursIn(pu,ws-7*DAY,ws))}</span>
      ${pend?` · <span class="pill pending">${esc(t("pendingN",{n:pend}))}</span>`:""}</div></div>
      <span class="pill ${on?"on":""}">${on?t("in"):t("out")}</span></li>`}).join(""):`<p class="empty">${t("emptyTeam")}</p>`;
-  if(!S.sel)return;
-  const p=S.people[S.sel];if(!p){S.sel=null;return renderTeam()}
+  if(!person)return;
+  const p=S.people[S.sel];if(!p){go("nav","BACK");return} // the open person's account is gone
   const on=openOf(S.sel);
   $("d-name").textContent=nameOf(S.sel);$("d-email").textContent=p.email||"";
   $("d-status").innerHTML=`<span class="pill ${on?"on":""}">${on?t("in"):t("out")}</span>${on?`<span>${esc(t("onSince",{t:ftime(on.in),d:dur(Date.now()-on.in)}))}</span>
@@ -383,32 +465,32 @@ function renderTeam(){const ids=Object.keys(S.people).sort((a,c)=>nameOf(a).loca
 function tick(){const n=new Date();$("clk-now").textContent=n.toLocaleTimeString(loc(),{hour:"numeric",minute:"2-digit"});
   $("clk-date").textContent=n.toLocaleDateString(loc(),{weekday:"long",month:"long",day:"numeric"});
   const on=S.me&&openOf(S.me);$("clk-status").textContent=on?t("onSince",{t:ftime(on.in),d:dur(Date.now()-on.in)}):t("off")}
-setInterval(()=>{if(S.me){tick();if(S.admin&&S.view==="team")renderTeam()}},30000);
-setInterval(()=>{if(S.me&&!document.hidden)load().catch(console.warn)},120000);
-document.addEventListener("visibilitychange",()=>{if(S.me&&!document.hidden)load().catch(console.warn)});
+setInterval(()=>{if(state.session==="ready"){tick();if(state.nav!=="clock")renderTeam()}},30000);
+const background=()=>{if(state.session==="ready"&&state.busy==="idle"&&!document.hidden)refresh()};
+setInterval(background,120000);
+document.addEventListener("visibilitychange",background);
+window.addEventListener("online",background);
 
-function arm(btn){if(btn.classList.contains("armed"))return true;btn.classList.add("armed");btn.textContent=t("sure");
-  setTimeout(()=>{btn.classList.remove("armed");btn.textContent=t("del")},3000);return false}
-
-async function punch(target){S.busy=true;render();
-  const r=await act(()=>sb.rpc("punch",target?{target}:{}));
-  if(r&&r.data)toast(target?t("saved"):t(r.data==="in"?"punchedIn":"punchedOut",{t:ftime(Date.now())}));
-  S.busy=false;render()}
+// Delete needs two taps on the same button within 3 seconds. The armed button is state, so a redraw keeps it.
+function confirmed(key){clearTimeout(confirmed.h);
+  if(S.armed===key){S.armed=null;return true}
+  S.armed=key;confirmed.h=setTimeout(()=>{S.armed=null;render()},3000);render();return false}
 
 document.addEventListener("click",ev=>{const b=ev.target.closest("[data-act]");if(!b)return;const a=b.dataset.act,id=b.dataset.id;
   if(a==="lang"){lang=lang==="en"?"es":"en";try{localStorage.setItem("tc-lang",lang)}catch(e){}applyLang()}
-  else if(a==="mode"){S.mode=b.dataset.m;$("a-note").textContent="";renderAuth()}
+  else if(a==="mode"){note("");if(state.session==="recovering")sb.auth.signOut();else go("auth",b.dataset.m.toUpperCase())}
   else if(a==="signout")sb.auth.signOut();
-  else if(a==="tab"){S.view=b.dataset.v;S.sel=null;render()}
-  else if(a==="punch"&&!S.busy)punch(null);
-  else if(a==="open"){S.sel=id;$("allow").value=S.people[id].pto_allowance||0;$("sh-date").value=isoDay();render();scrollTo(0,0)}
-  else if(a==="back"){S.sel=null;render()}
-  else if(a==="forceout")punch(S.sel);
+  else if(a==="retry")go("session","RETRY");
+  else if(a==="tab")go("nav",b.dataset.v.toUpperCase());
+  else if(a==="punch")clock(openOf(S.me)?"out":"in");
+  else if(a==="open"){S.sel=id;$("allow").value=S.people[id].pto_allowance||0;$("sh-date").value=isoDay();go("nav","OPEN");scrollTo(0,0)}
+  else if(a==="back")go("nav","BACK");
+  else if(a==="forceout")clock("out",S.sel);
   else if(a==="role")act(()=>sb.from("profiles").update({role:S.people[S.sel].role==="admin"?"employee":"admin"}).eq("id",S.sel),t("saved"));
-  else if(a==="ptoset")act(()=>sb.from("pto_requests").update({status:b.dataset.s,decided_by:S.me}).eq("id",id),t("saved"));
+  else if(a==="ptoset")act(()=>sb.from("pto_requests").update({status:b.dataset.s,decided_by:b.dataset.s==="pending"?null:S.me}).eq("id",id),t("saved"));
   else if(a==="ptocancel")act(()=>sb.from("pto_requests").delete().eq("id",id));
-  else if(a==="delpunch"&&arm(b))act(()=>sb.from("punches").delete().eq("id",id),t("saved"));
-  else if(a==="delhol"&&arm(b))act(()=>sb.from("holidays").delete().eq("day",id),t("saved"))});
+  else if(a==="delpunch"&&confirmed(a+":"+id))act(()=>sb.from("punches").delete().eq("id",id),t("saved"));
+  else if(a==="delhol"&&confirmed(a+":"+id))act(()=>sb.from("holidays").delete().eq("day",id),t("saved"))});
 document.addEventListener("keydown",ev=>{if(ev.key==="Enter"&&ev.target.matches("li[data-act]"))ev.target.click()});
 
 $("f-pto").addEventListener("submit",async ev=>{ev.preventDefault();
@@ -423,15 +505,16 @@ $("f-shift").addEventListener("submit",ev=>{ev.preventDefault();
   if(o-i>16*36e5)return toast(t("badShift"));
   act(()=>sb.from("punches").insert({user_id:S.sel,clock_in:i.toISOString(),clock_out:o.toISOString(),manual:true}),t("saved"))});
 
-async function start(){const{data:{session}}=await sb.auth.getSession();
-  if(!session){S.me=null;show("auth");renderAuth();return}
-  S.me=session.user.id;
-  try{await load()}catch(e){console.warn(e);$("msg").textContent=t("err");show("msg")}}
-sb.auth.onAuthStateChange((evt)=>{
-  if(evt==="PASSWORD_RECOVERY"){S.mode="newpass";S.me=null;show("auth");renderAuth()}
-  else if(evt==="SIGNED_OUT"){S.me=null;S.view="clock";S.sel=null;S.mode="signin";show("auth");renderAuth()}
-  else if(evt==="SIGNED_IN"&&!S.me&&S.mode!=="newpass")setTimeout(start)});
-applyLang();start();
+// ---- sign-in events -> session machine ----
+// Remember who signed in (unless a screen is already showing their data), then send the event.
+function onSession(session,ev){if(session&&state.session!=="ready"&&state.session!=="loading")S.me=session.user.id;go("session",ev)}
+// setTimeout: Supabase must not be called from inside its own auth callback.
+sb.auth.onAuthStateChange((evt,session)=>setTimeout(()=>{
+  if(evt==="PASSWORD_RECOVERY")onSession(session,"RECOVERY");
+  else if(evt==="SIGNED_OUT")go("session","SIGNED_OUT");
+  else if(session)onSession(session,"SIGNED_IN")})); // INITIAL_SESSION, SIGNED_IN, TOKEN_REFRESHED, USER_UPDATED
+applyLang();
+sb.auth.getSession().then(({data:{session}})=>onSession(session,session?"SIGNED_IN":"SIGNED_OUT"),()=>go("session","SIGNED_OUT"));
 </script>
 </body>
 </html>

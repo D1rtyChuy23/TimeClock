@@ -13,12 +13,13 @@ A small employee time clock for about 9 people (3 admins, 6 employees; starting 
 - One big **Clock in / Clock out** button
 - See hours **today**, **this week** (Mon–Sun), and **PTO hours left** this year
 - Request PTO (date, hours, optional note); cancel while pending; see status
+- If the connection drops, the last data stays on screen with a "No connection" notice; if the first load fails there is a "Try again" screen
 - See their last ~10 shifts
 - See upcoming company **holidays (days off)**, plus a notice at the top: "Next day off: X · in N days", or "Today is X. We're off" on the day
 
 **Admins** (role `admin`) get everything above plus a **Team** tab:
 - Everyone's clocked-in/out status, this week's and last week's hours, and a count of pending PTO requests
-- Per person: approve or deny PTO, set yearly PTO allowance, view shifts for the last 90 days, delete a shift, add a missed shift (handles overnight shifts, max 16 h), force clock-out, and promote or demote admins
+- Per person: approve or deny PTO (and **Undo** a decision, which returns it to pending), set yearly PTO allowance, view shifts for the last 90 days, delete a shift, add a missed shift (handles overnight shifts, max 16 h), force clock-out, and promote or demote admins
 - Add or delete holidays
 
 **Language:** an EN/ES toggle in the header. It is remembered in `localStorage` (`tc-lang`) and defaults to Spanish when the browser language is Spanish.
@@ -82,15 +83,16 @@ Tables in `public`, all with **Row Level Security ON**:
 ### Functions and triggers
 - `is_admin()`: true if the caller's profile role is admin (security definer). Used inside the RLS policies.
 - `handle_new_user()` trigger on `auth.users` insert creates the profile from sign-up metadata `full_name`. **The very first account ever created becomes admin; everyone after is an employee.** Admins promote others in the Team tab.
-- `guard_profile()` trigger blocks non-admins from changing `role`, `pto_allowance` or `email`, even on their own row.
-- `punch(target uuid default null)` RPC toggles clock in/out **using the server clock (`now()`)**, so a wrong phone clock can't cheat. It returns `'in'` or `'out'`. Only an admin may pass another user's id. **Employees cannot insert punches directly**; this RPC is their only path.
+- `guard_profile()` trigger blocks signed-in non-admins from changing `role`, `pto_allowance` or `email`, even on their own row, and refuses to demote the **last admin**. The Supabase SQL editor (no signed-in user) is allowed through, so the owner can repair roles there.
+- `clock(action text, target uuid default null)` RPC: **the app's only way to clock in or out.** `action` is `'in'` or `'out'`; it uses the server clock (`now()`), so a wrong phone clock can't cheat. It returns `'in'`, `'out'`, `'already_in'` or `'already_out'`, so a stale screen or a second device can never flip a shift the wrong way. Only an admin may pass another user's id. **Employees cannot insert punches directly.**
+- `punch(target uuid default null)`: the older toggle version. The app no longer calls it; it stays so an old cached copy of the page keeps working. Don't build on it.
 
 ### RLS policy summary
 | Table | Employee | Admin |
 |---|---|---|
 | profiles | read/update own row (role/PTO locked by trigger) | read/update all |
-| punches | read own; write only through `punch()` | read/insert/update/delete all |
-| pto_requests | read own; insert own as `pending` only; delete own while pending | read all; update (approve/deny); delete |
+| punches | read own; write only through `clock()` | read/insert/update/delete all |
+| pto_requests | read own; insert own as `pending` only; delete own while pending | read all; update (approve/deny/undo); delete |
 | holidays | read | full write |
 | anon (signed out) | nothing (all grants revoked) | n/a |
 
@@ -214,21 +216,127 @@ create policy "admin writes" on public.holidays for all to authenticated
 revoke all on public.profiles, public.punches, public.pto_requests, public.holidays from anon;
 ```
 
-The Supabase security advisor shows 2 warnings ("signed-in users can execute SECURITY DEFINER function" for `is_admin` and `punch`). **These are expected.** `punch` checks permissions itself, and `is_admin` only reveals the caller's own role. Don't "fix" them by revoking execute, or the app breaks.
+### Second migration (`explicit_state_machines`), applied on top of the SQL above
+
+```sql
+create function public.clock(action text, target uuid default null) returns text
+language plpgsql security definer set search_path = '' as $$
+declare uid uuid := coalesce(target, auth.uid()); n int;
+begin
+  if auth.uid() is null then raise exception 'Not signed in'; end if;
+  if uid <> auth.uid() and not public.is_admin() then raise exception 'Not allowed'; end if;
+  if action = 'in' then
+    insert into public.punches (user_id, clock_in, created_by) values (uid, now(), auth.uid())
+      on conflict do nothing;   -- one_open_punch index: a second open shift is a no-op
+    get diagnostics n = row_count;
+    return case when n = 1 then 'in' else 'already_in' end;
+  elsif action = 'out' then
+    update public.punches set clock_out = now() where user_id = uid and clock_out is null;
+    return case when found then 'out' else 'already_out' end;
+  end if;
+  raise exception 'action must be in or out';
+end $$;
+revoke execute on function public.clock(text, uuid) from public, anon;
+grant execute on function public.clock(text, uuid) to authenticated;
+
+create or replace function public.guard_profile() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  if old.role = 'admin' and new.role <> 'admin'
+     and not exists (select 1 from public.profiles where role = 'admin' and id <> old.id) then
+    raise exception 'There must be at least one admin';
+  end if;
+  if (select auth.uid()) is not null and not public.is_admin()
+     and (new.role is distinct from old.role or new.pto_allowance is distinct from old.pto_allowance or new.email is distinct from old.email) then
+    raise exception 'Only admins can change this';
+  end if;
+  return new;
+end $$;
+```
+
+The Supabase security advisor shows warnings ("signed-in users can execute SECURITY DEFINER function") for `is_admin`, `punch` and `clock`. **These are expected.** `punch` and `clock` check permissions themselves, and `is_admin` only reveals the caller's own role. Don't "fix" them by revoking execute, or the app breaks.
 
 ---
 
 ## 5. How the front end is organized (inside `index.html`)
 
+### 5.1 State machines: read this before changing any flow
+
+Every flow in the app is an explicit state machine. They are all declared in one table, `M`, near the top of the script. **`go(machine, EVENT)` is the only code that changes state.** An event with no entry for the current state is ignored and logged with `console.debug`. `render()` draws the whole page from the current states, so no handler shows or hides screens by hand.
+
+To add or change a flow: edit the `M` table, then send events with `go()`. Don't add new boolean flags or toggle `hidden` from event handlers.
+
+| Machine | States | What it controls |
+|---|---|---|
+| `session` | `booting` → `signedOut` / `loading` → `ready` / `loadError`; `recovering` | Who is using the page and which top-level screen shows |
+| `auth` | `signin` ⇄ `signup`, `signin` ⇄ `reset` | Which sign-in form shows (`recovering` always shows the new-password form) |
+| `nav` | `clock` ⇄ `team` ⇄ `person` | Which app screen shows; `team` and `person` are admin only; `S.sel` is the open person |
+| `sync` | `ok` ⇄ `stale` | Whether the last background refresh worked; `stale` shows the "No connection" notice |
+| `busy` | `idle` ⇄ `saving` | One save at a time; a second tap or submit while saving is ignored |
+
+```mermaid
+stateDiagram-v2
+  [*] --> booting
+  booting --> signedOut: SIGNED_OUT
+  booting --> loading: SIGNED_IN
+  signedOut --> loading: SIGNED_IN
+  loading --> ready: LOADED
+  loading --> loadError: FAILED
+  loadError --> loading: RETRY
+  ready --> signedOut: SIGNED_OUT
+  loading --> signedOut: SIGNED_OUT
+  loadError --> signedOut: SIGNED_OUT
+  booting --> recovering: RECOVERY
+  signedOut --> recovering: RECOVERY
+  loading --> recovering: RECOVERY
+  ready --> recovering: RECOVERY
+  recovering --> loading: PASSWORD_SET
+  recovering --> signedOut: SIGNED_OUT
+```
+
+Three more machines live in the **database**, which has the final say. The page only reads them and offers the allowed moves:
+
+| Machine | States and moves | Enforced by |
+|---|---|---|
+| shift (per person) | `out` → `in` → `out`, through `clock('in')` / `clock('out')` | `clock()` + the one-open-shift unique index |
+| time-off request | `pending` → `approved` / `denied` (admin); `approved` / `denied` → `pending` (admin, "Undo"); `pending` → deleted (owner, "Cancel") | RLS policies. The buttons come from the `PTO` table in the script |
+| role | `employee` ⇄ `admin`; first account ever becomes admin; never zero admins | `handle_new_user()` + `guard_profile()` |
+
+Small pieces of state that are not in `M`:
+- **Delete confirm:** `S.armed` holds the one delete button waiting for its second tap (for example `"delpunch:12"`). It clears after 3 seconds. See `confirmed()`.
+- **Language:** `lang` is `en` or `es`, saved in `localStorage` as `tc-lang`.
+
+`ENTER` lists what happens on arriving in a state: `session.loading` starts the data load, and `session.signedOut` clears all loaded data.
+
+### 5.2 Reading state from outside (tests, agents, debugging)
+
+- `<body>` carries the live state as attributes: `data-session`, `data-auth`, `data-nav`, `data-sync`, `data-busy`, plus `data-role` (`admin` / `employee`) and `data-shift` (`in` / `out`). Wait on these instead of sleeping, for example `body[data-session="ready"][data-busy="idle"]`.
+- `window.timeclock` exposes `machines`, `pto` and `state`.
+- Every transition is logged: `[state] session: loading -> ready (LOADED)`. Turn on "Verbose" in the browser console to see them.
+- Every button has a stable `id` or `data-act` (and `data-id` for rows). Use those as selectors, not the text, which changes with the language.
+
+### 5.3 Other pieces
+
 - `T` object: **all UI text**, with `en` and `es` blocks. **Every new string must be added to both.** `t(key, {n:..})` fills `{n}`-style placeholders. Elements with `data-t="key"` are filled automatically.
-- `S` object: app state (current user, role, people, punches, PTO, holidays, current view).
-- `load()`: loads profiles, punches from the last 90 days, PTO requests, and holidays from today on, in parallel. RLS decides what each person gets back, so the same query returns everyone's data for admins and only your own for employees.
-- `act(fn, okMsg)`: runs one write, shows a toast, then reloads. All writes go through it.
-- `render()` / `renderTeam()`: redraw from `S`.
-- Refresh: data reloads every 2 minutes and whenever the tab becomes visible again. There is no realtime subscription.
-- Helpers `weekStart`, `hoursIn`, `ptoUsed`, `daysUntil`, plus `console.assert` self-checks that run on load. Keep them passing.
+- `S` object: loaded data and context (current user, role, people, punches, PTO, holidays, open person).
+- `load()` fetches profiles, punches from the last 90 days, PTO requests, and holidays from today on, in parallel. RLS decides what each person gets back. **`refresh()` is the only caller of `load()`**: it sends the outcome to the `session` machine (first load) or the `sync` machine (later refreshes).
+- `act(fn, okMsg)` runs one write behind the `busy` lock, shows a toast, then refreshes. All writes go through it.
+- `clock(action, target)` calls the `clock` RPC with the direction the user saw on the button.
+- Refresh: data reloads every 2 minutes, when the tab becomes visible, and when the device comes back online. There is no realtime subscription.
+- Helpers `weekStart`, `hoursIn`, `ptoUsed`, `daysUntil`, plus `console.assert` self-checks that run on load (including one that checks every transition in `M` points to a real state). Keep them passing.
 - Weeks run Monday–Sunday in the viewer's local time. An open shift counts up to "now".
-- Auth: `signInWithPassword`, `signUp` (sends `full_name` in metadata), `resetPasswordForEmail`, and the `PASSWORD_RECOVERY` event for setting a new password. Redirects go to `location.origin + location.pathname`.
+- Auth: `signInWithPassword`, `signUp` (sends `full_name` in metadata), `resetPasswordForEmail`, and the `PASSWORD_RECOVERY` event. Supabase's auth events are mapped to `session` events at the bottom of the script. Sign-in errors tell apart a wrong password, an unconfirmed email and an unreachable server.
+
+### 5.4 Tests
+
+`test/run.py` drives `index.html` in headless Chromium against `test/fake-supabase.js`, a stand-in backend that follows the same rules as the real database. It checks every machine above (56 checks).
+
+```
+pip install playwright && playwright install chromium
+python3 test/run.py
+```
+
+**Run it before every push.** If you change a database rule, change `fake-supabase.js` to match.
 
 ---
 
@@ -245,7 +353,8 @@ The Supabase security advisor shows 2 warnings ("signed-in users can execute SEC
 
 - Keep it **one simple page** and **super easy for employees**: big buttons, no extra steps.
 - **Every user-facing string goes in both English and Spanish.**
-- **Don't weaken security**: keep RLS on, keep clock-in on the server clock through `punch()`, never let employees write punches, roles or PTO allowances directly, and never add the service key to the browser.
+- **Change flows through the state machine table** (section 5.1), and run `python3 test/run.py` before pushing.
+- **Don't weaken security**: keep RLS on, keep clock-in on the server clock through `clock()`, never let employees write punches, roles or PTO allowances directly, and never add the service key to the browser.
 - After any schema change, re-run the Supabase security advisor, and test as an employee that you **cannot** approve your own PTO, add a shift, or make yourself admin.
 - Escape any user-entered text before putting it into HTML (use the existing `esc()` helper).
 
@@ -259,5 +368,5 @@ The Supabase security advisor shows 2 warnings ("signed-in users can execute SEC
 
 ## 9. Test status
 
-- Verified: the page loads and shows sign-in in a real browser, the language toggle works, there are no console errors, and signed-out requests are refused by the database.
-- **Not yet run:** the full employee/admin permission test (it was blocked waiting for approval). Run the checks in section 7 with two real accounts before rolling out to the team.
+- **Browser:** `test/run.py` passes 56 of 56 checks against the stand-in backend (sign-in flows, clock in/out, double taps, stale screens, time off, deletes, admin screens, lost connection, password recovery, Spanish).
+- **Real database: not yet run.** The permission test for the real database (an employee trying to approve their own PTO, add a shift, make themselves admin, or clock someone else in; plus the `clock()` results and the last-admin rule) has been written but was blocked waiting for the owner's approval in Supabase. Run the checks in section 7 with two real accounts before rolling out to the team.
