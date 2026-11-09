@@ -54,6 +54,17 @@ The first account ever created becomes the admin.
 | `src/routes/index.tsx`, `login.tsx` | Booting / signed out / signed in gate |
 | `src/routes/reset-password.tsx` | Where the link in a reset email lands |
 
+### Colors
+
+The palette is built on the brand green **`#90a955`** and lives as tokens at the top of `src/styles.css` (light and dark). Use the tokens, never raw hex values in components.
+
+| Token | Use |
+|---|---|
+| `leaf` (`#90a955`) | The brand color: the Clock in button, "you / on" accents, the header rule. Put `leaf-ink` (dark) text on it, never white: white on this green is too faint to read. |
+| `leaf-text` | A darker leaf for small text on paper and cards |
+| `pine` | Dark green for primary buttons, selected tabs and the Clock out button; `foam` text goes on it |
+| `paper`, `paper-2`, `card`, `line`, `ink`, `muted` | Backgrounds, borders and text |
+
 ### Platform scaffold (leave alone unless you know why)
 
 `scripts/`, `server/`, `public/__grok/`, `src/lib/auth/`, `src/lib/app-data/`, `src/lib/og/`, `src/lib/preview-*`, `src/lib/multiplayer/`, `src/components/ui/`. Two deliberate changes were made there:
@@ -70,7 +81,7 @@ Set these where the app is deployed:
 | `RESEND_API_KEY` | An API key from resend.com |
 | `EMAIL_FROM` | A sender Resend has verified, for example `Time Clock <clock@yourdomain.com>` |
 
-Until both are set, nothing is emailed and the app says so: invitations are created with a link the admin copies and sends, and the sign-in screen says password reset by email is not set up. In local development (no key) each message is printed in the server log instead.
+Until both are set, the server emails nothing. Invitations still go out by email another way: each pending invitation has an **Email it** button, a `mailto:` link that opens the admin's own email app with the message already written (and a Copy link button beside it), and the sign-in screen says password reset by email is not set up. In local development (no key) each message is printed in the server log instead.
 
 ---
 
