@@ -83,7 +83,7 @@ function dateInput(d: Date): string {
 
 const field = "mt-1 h-12 w-full rounded-lg border border-line bg-paper px-3 text-base text-ink";
 const solid =
-  "inline-flex h-11 items-center justify-center rounded-lg bg-espresso px-3 text-sm font-semibold text-foam disabled:opacity-60";
+  "inline-flex h-11 items-center justify-center rounded-lg bg-pine px-3 text-sm font-semibold text-foam disabled:opacity-60";
 const ghost =
   "inline-flex h-11 items-center justify-center rounded-lg border border-line bg-card px-3 text-sm font-medium text-ink disabled:opacity-60";
 
@@ -199,9 +199,11 @@ export function ClockApp() {
       data-role={snap?.me.role}
       data-shift={snap ? (onClock ? "in" : "out") : undefined}
     >
-      <header className="sticky top-0 z-20 border-b border-line bg-paper">
+      <header className="sticky top-0 z-20 border-b-4 border-leaf bg-paper">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
-          <p className="font-display text-3xl font-bold uppercase leading-none tracking-wide">{t("appName")}</p>
+          <p className="font-display text-2xl font-bold uppercase leading-none tracking-wide whitespace-nowrap sm:text-3xl">
+            {t("appName")}
+          </p>
           <div className="flex items-center gap-2">
             <div role="group" aria-label={t("language")} className="flex overflow-hidden rounded-lg border border-line">
               {(["en", "es"] as const).map((code) => (
@@ -212,7 +214,7 @@ export function ClockApp() {
                   onClick={() => setLang(code)}
                   className={
                     "h-11 min-w-11 px-3 text-sm font-semibold " +
-                    (lang === code ? "bg-espresso text-foam" : "bg-card text-muted")
+                    (lang === code ? "bg-pine text-foam" : "bg-card text-muted")
                   }
                 >
                   {code.toUpperCase()}
@@ -287,7 +289,7 @@ function TabButton({
       onClick={onClick}
       className={
         "flex h-12 items-center justify-center gap-2 rounded-xl text-sm font-semibold " +
-        (active ? "bg-espresso text-foam" : "border border-line bg-card text-ink")
+        (active ? "bg-pine text-foam" : "border border-line bg-card text-ink")
       }
     >
       {children}
@@ -298,7 +300,7 @@ function TabButton({
 function PendingBadge({ n }: { n: number }) {
   if (n <= 0) return null;
   return (
-    <span className="rounded-full bg-foam px-2 text-xs font-bold tabular-nums text-espresso">{n}</span>
+    <span className="rounded-full bg-leaf px-2 text-xs font-bold tabular-nums text-leaf-ink">{n}</span>
   );
 }
 
@@ -346,8 +348,9 @@ function Mine({
             )
           }
           className={
-            "mt-4 flex min-h-32 w-full flex-col items-center justify-center rounded-2xl px-4 py-6 disabled:opacity-60 " +
-            (open ? "bg-on text-on-ink" : "bg-espresso text-foam")
+            "mt-4 flex min-h-32 w-full flex-col items-center justify-center rounded-2xl px-4 py-6 " +
+            "shadow-[inset_0_-5px_0_rgb(0_0_0/0.16)] transition-transform active:translate-y-0.5 disabled:opacity-60 " +
+            (open ? "bg-pine text-foam" : "bg-leaf text-leaf-ink")
           }
         >
           <span className="font-display text-5xl font-bold uppercase leading-none tracking-wide">
@@ -653,10 +656,10 @@ function TeamCalendar({
       <p className="mt-1 text-sm text-pretty text-muted">{t("calLead")}</p>
 
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
-        <Legend swatch="bg-espresso" label={t("legendClosed")} />
-        <Legend swatch="bg-on" label={t("legendYou")} />
+        <Legend swatch="bg-pine" label={t("legendClosed")} />
+        <Legend swatch="bg-leaf" label={t("legendYou")} />
         <Legend swatch="bg-muted" label={t("legendOthers")} />
-        <Legend swatch="border border-espresso bg-card" label={t("legendPending")} />
+        <Legend swatch="border border-pine bg-card" label={t("legendPending")} />
         <Legend swatch="rounded-sm border border-muted bg-card" label={t("legendFederal")} />
       </div>
 
@@ -706,18 +709,18 @@ function TeamCalendar({
               className={
                 "flex min-h-11 flex-col items-center justify-center rounded-lg px-0.5 py-1 " +
                 (selected ? "bg-paper-2 " : "bg-paper ") +
-                (key === todayKey ? "ring-2 ring-espresso" : "")
+                (key === todayKey ? "ring-2 ring-pine" : "")
               }
             >
               <span className="text-sm tabular-nums leading-none">{day}</span>
               <span className="mt-1 flex h-1.5 gap-0.5">
-                {holiday ? <span className="size-1.5 rounded-sm bg-espresso" /> : null}
+                {holiday ? <span className="size-1.5 rounded-sm bg-pine" /> : null}
                 {!holiday && federal.some((f) => f.day === key) ? (
                   <span className="size-1.5 rounded-sm border border-muted" />
                 ) : null}
-                {mineApproved ? <span className="size-1.5 rounded-full bg-on" /> : null}
+                {mineApproved ? <span className="size-1.5 rounded-full bg-leaf" /> : null}
                 {others ? <span className="size-1.5 rounded-full bg-muted" /> : null}
-                {pending ? <span className="size-1.5 rounded-full border border-espresso" /> : null}
+                {pending ? <span className="size-1.5 rounded-full border border-pine" /> : null}
               </span>
             </button>
           );
@@ -854,7 +857,7 @@ function TeamCalendar({
                     }
                     className={
                       "flex h-11 w-24 shrink-0 items-center gap-2 rounded-full border px-1.5 text-sm font-semibold disabled:opacity-60 " +
-                      (closed ? "flex-row-reverse border-espresso bg-espresso text-foam" : "border-line bg-paper text-muted")
+                      (closed ? "flex-row-reverse border-pine bg-pine text-foam" : "border-line bg-paper text-muted")
                     }
                   >
                     <span className={"size-7 rounded-full " + (closed ? "bg-foam" : "bg-muted")} aria-hidden="true" />
@@ -1048,7 +1051,7 @@ function InvitePanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; busy
               onClick={() => setRole(r)}
               className={
                 "h-11 rounded-lg text-sm font-semibold " +
-                (role === r ? "bg-espresso text-foam" : "border border-line bg-paper text-ink")
+                (role === r ? "bg-pine text-foam" : "border border-line bg-paper text-ink")
               }
             >
               {t(r)}
@@ -1167,7 +1170,7 @@ function PersonCard({
             {you ? <span className="ml-2 text-sm font-medium text-muted">{t("you")}</span> : null}
           </p>
           <p className="mt-1 text-sm text-muted">
-            <span className={onClock ? "font-semibold text-on" : ""}>{onClock ? t("working") : t("notWorking")}</span>
+            <span className={onClock ? "font-semibold text-leaf-text" : ""}>{onClock ? t("working") : t("notWorking")}</span>
             {" · "}
             {person.role === "admin" ? t("admin") : t("employee")}
             {pending > 0 ? ` · ${t("pendingCount", { n: pending })}` : ""}

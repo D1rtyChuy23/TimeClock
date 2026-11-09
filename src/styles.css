@@ -1,32 +1,40 @@
 @import "tailwindcss";
 
+/*
+ * Palette built on the brand green #90a955 ("leaf").
+ * leaf      the brand color: the Clock in button and "you / on" accents. Dark text goes on it, never white.
+ * leaf-text a darker leaf that is readable as small text on paper and cards.
+ * pine      the dark green for primary buttons, selected tabs and the Clock out button; foam text goes on it.
+ */
 :root {
   color-scheme: light;
-  --paper: #f3eee6;
-  --paper-2: #e7e0d2;
-  --ink: #1c1712;
-  --muted: #6f655b;
-  --line: #d8d0c3;
-  --card: #fffdf8;
-  --espresso: #3f2a1d;
-  --foam: #f6efe4;
-  --on: #14663d;
-  --on-ink: #f3fff7;
+  --paper: #f3f6ec;
+  --paper-2: #e6ecd9;
+  --ink: #1b2410;
+  --muted: #5c6a4c;
+  --line: #d6dfc6;
+  --card: #fdfef9;
+  --pine: #2e3d18;
+  --foam: #f7faef;
+  --leaf: #90a955;
+  --leaf-ink: #18200d;
+  --leaf-text: #4f6826;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --paper: #12100e;
-    --paper-2: #1c1916;
-    --ink: #f3eee6;
-    --muted: #b3a79a;
-    --line: #322c26;
-    --card: #1a1714;
-    --espresso: #e7d3bc;
-    --foam: #1c1712;
-    --on: #3ddc84;
-    --on-ink: #062214;
+    --paper: #10140b;
+    --paper-2: #1a2012;
+    --ink: #eef3e3;
+    --muted: #a7b396;
+    --line: #2b3420;
+    --card: #161b0f;
+    --pine: #dce7c4;
+    --foam: #18200d;
+    --leaf: #90a955;
+    --leaf-ink: #10160a;
+    --leaf-text: #a9c26d;
   }
 }
 
@@ -39,10 +47,11 @@
   --color-muted: var(--muted);
   --color-line: var(--line);
   --color-card: var(--card);
-  --color-espresso: var(--espresso);
+  --color-pine: var(--pine);
   --color-foam: var(--foam);
-  --color-on: var(--on);
-  --color-on-ink: var(--on-ink);
+  --color-leaf: var(--leaf);
+  --color-leaf-ink: var(--leaf-ink);
+  --color-leaf-text: var(--leaf-text);
 }
 
 @layer base {
@@ -82,8 +91,13 @@
     font: inherit;
   }
 
+  ::selection {
+    background-color: var(--leaf);
+    color: var(--leaf-ink);
+  }
+
   :focus-visible {
-    outline: 2px solid var(--espresso);
+    outline: 2px solid var(--pine);
     outline-offset: 2px;
   }
 }

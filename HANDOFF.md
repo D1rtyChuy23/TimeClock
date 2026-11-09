@@ -54,6 +54,17 @@ The first account ever created becomes the admin.
 | `src/routes/index.tsx`, `login.tsx` | Booting / signed out / signed in gate |
 | `src/routes/reset-password.tsx` | Where the link in a reset email lands |
 
+### Colors
+
+The palette is built on the brand green **`#90a955`** and lives as tokens at the top of `src/styles.css` (light and dark). Use the tokens, never raw hex values in components.
+
+| Token | Use |
+|---|---|
+| `leaf` (`#90a955`) | The brand color: the Clock in button, "you / on" accents, the header rule. Put `leaf-ink` (dark) text on it, never white: white on this green is too faint to read. |
+| `leaf-text` | A darker leaf for small text on paper and cards |
+| `pine` | Dark green for primary buttons, selected tabs and the Clock out button; `foam` text goes on it |
+| `paper`, `paper-2`, `card`, `line`, `ink`, `muted` | Backgrounds, borders and text |
+
 ### Platform scaffold (leave alone unless you know why)
 
 `scripts/`, `server/`, `public/__grok/`, `src/lib/auth/`, `src/lib/app-data/`, `src/lib/og/`, `src/lib/preview-*`, `src/lib/multiplayer/`, `src/components/ui/`. Two deliberate changes were made there:

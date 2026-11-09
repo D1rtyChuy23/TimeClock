@@ -8,7 +8,7 @@ import { signInInfo } from "@/lib/timeclock.functions";
 export const INVITE_KEY = "tc-invite";
 
 const input = "mt-1 h-12 w-full rounded-lg border border-line bg-paper px-3 text-base";
-const primary = "h-12 w-full rounded-xl bg-espresso text-base font-semibold text-foam disabled:opacity-60";
+const primary = "h-12 w-full rounded-xl bg-pine text-base font-semibold text-foam disabled:opacity-60";
 const link = "h-11 w-full text-sm font-medium text-muted underline-offset-2 hover:underline";
 
 /**
@@ -23,16 +23,23 @@ function Shell({ children }: { children: ReactNode }) {
   const { t, lang, setLang } = useI18n();
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-4 py-10">
-      <div className="flex items-start justify-between gap-3">
-        <p className="font-display text-5xl font-bold uppercase leading-none tracking-wide text-ink">{t("appName")}</p>
-        <div role="group" aria-label={t("language")} className="flex overflow-hidden rounded-lg border border-line">
+      <div className="flex items-center justify-between gap-3">
+        <p className="flex min-w-0 items-center gap-3 font-display text-4xl font-bold uppercase leading-none tracking-wide text-ink">
+          <svg viewBox="0 0 32 32" className="size-10 shrink-0" aria-hidden="true">
+            <rect width="32" height="32" rx="8" className="fill-leaf" />
+            <circle cx="16" cy="16" r="8" fill="none" strokeWidth="2" className="stroke-leaf-ink" />
+            <path d="M16 11.5V16l3 2" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="stroke-leaf-ink" />
+          </svg>
+          {t("appName")}
+        </p>
+        <div role="group" aria-label={t("language")} className="flex shrink-0 overflow-hidden rounded-lg border border-line">
           {(["en", "es"] as const).map((code) => (
             <button
               key={code}
               type="button"
               aria-pressed={lang === code}
               onClick={() => setLang(code)}
-              className={"h-11 min-w-11 px-3 text-sm font-semibold " + (lang === code ? "bg-espresso text-foam" : "bg-card text-muted")}
+              className={"h-11 min-w-11 px-3 text-sm font-semibold " + (lang === code ? "bg-pine text-foam" : "bg-card text-muted")}
             >
               {code.toUpperCase()}
             </button>
