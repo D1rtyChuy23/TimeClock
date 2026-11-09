@@ -1,25 +1,31 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { CalendarOff, ChevronLeft, ChevronRight, PenLine } from "lucide-react";
 import { toast } from "sonner";
+import { INVITE_KEY } from "@/components/auth-screen";
 import { UserButton } from "@/lib/auth/gates";
-import { PTO_NEXT, canPto, nextLoad, ptoActions, shiftAction, type LoadStatus } from "@/lib/clock-machine";
-import { errorCopyKey, useI18n, type CopyKey, type Lang } from "@/lib/i18n";
+import { PTO_NEXT, canPto, inviteState, nextLoad, ptoActions, shiftAction, type LoadStatus } from "@/lib/clock-machine";
+import { federalHolidays, federalOn } from "@/lib/federal-holidays";
+import { english, errorCopyKey, useI18n, type CopyKey, type Lang } from "@/lib/i18n";
 import { addDays, daysUntil, fmtHms, fmtHours, hoursIn, ptoUsed, selfCheck, weekStart } from "@/lib/time";
 import {
+  acceptInvite,
   addHoliday,
   addPunch,
   cancelPto,
+  createInvite,
   decidePto,
   deleteHoliday,
   deletePunch,
   forceOut,
   loadClock,
+  removeInvite,
   requestPto,
   setAllowance,
   setRole,
   togglePunch,
   type ClockResult,
   type Holiday,
+  type Invite,
   type OffDay,
   type Profile,
   type PtoRequest,
@@ -163,6 +169,23 @@ export function ClockApp() {
     if (!ok) void reload();
     return ok;
   };
+
+  // Someone who arrived through an invitation link claims it once, on their first good load.
+  const claimed = useRef(false);
+  useEffect(() => {
+    if (status !== "ready" || claimed.current) return;
+    claimed.current = true;
+    let token = "";
+    try {
+      token = window.sessionStorage.getItem(INVITE_KEY) ?? "";
+      window.sessionStorage.removeItem(INVITE_KEY);
+    } catch {
+      /* storage unavailable: nothing to claim */
+    }
+    if (token) void act(() => acceptInvite({ data: { token } }), "welcomeInvite");
+    // `act` is recreated every render; this runs once, when the first load lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   const onClock = snap ? snap.punches.some((p) => p.userId === snap.me.userId && !p.clockOut) : false;
 
@@ -407,14 +430,24 @@ function ShiftRow({ punch, now, lang }: { punch: Punch; now: Date; lang: Lang })
   );
 }
 
+/** A closure's name. Federal holidays switched on from the list are saved in English and shown translated. */
+function useHolidayName(): (h: Holiday) => string {
+  const { t } = useI18n();
+  return (h) => {
+    const fed = federalOn(h.day);
+    return fed && h.name === english(`fed_${fed.key}`) ? t(`fed_${fed.key}`) : h.name;
+  };
+}
+
 function HolidayBanner({ holidays, now }: { holidays: Holiday[]; now: Date }) {
   const { t } = useI18n();
+  const nameOf = useHolidayName();
   const todays = holidays.filter((h) => daysUntil(h.day, now) === 0);
   if (todays.length > 0) {
     return (
       <p className="flex items-start gap-2 rounded-xl border border-line bg-paper-2 px-3 py-3 text-sm font-medium" role="status">
         <CalendarOff className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-        {t("todayOff", { name: todays.map((h) => h.name).join(" · ") })}
+        {t("todayOff", { name: todays.map(nameOf).join(" · ") })}
       </p>
     );
   }
@@ -423,7 +456,8 @@ function HolidayBanner({ holidays, now }: { holidays: Holiday[]; now: Date }) {
     .filter((x) => x.n > 0)
     .sort((a, b) => a.n - b.n)[0];
   if (!next) return null;
-  const text = next.n === 1 ? t("nextOff1", { name: next.h.name }) : t("nextOff", { name: next.h.name, n: next.n });
+  const name = nameOf(next.h);
+  const text = next.n === 1 ? t("nextOff1", { name }) : t("nextOff", { name, n: next.n });
   return (
     <p className="flex items-start gap-2 rounded-xl border border-line bg-paper-2 px-3 py-3 text-sm font-medium" role="status">
       <CalendarOff className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
@@ -606,6 +640,12 @@ function TeamCalendar({
   const focusPending = snap.pto.filter(
     (p) => p.userId === snap.me.userId && p.status === "pending" && p.day === focusDay,
   );
+  const nameOf = useHolidayName();
+  const isClosed = (day: string) => snap.holidays.some((h) => h.day === day);
+  const federal = federalHolidays(year);
+  // A federal holiday the shop has not been closed for: shown, but it is a normal work day.
+  const focusFederal = federalOn(focusDay);
+  const focusFederalOpen = focusFederal && !isClosed(focusDay) ? focusFederal : null;
 
   return (
     <section className="rounded-2xl border border-line bg-card p-4">
@@ -617,6 +657,7 @@ function TeamCalendar({
         <Legend swatch="bg-on" label={t("legendYou")} />
         <Legend swatch="bg-muted" label={t("legendOthers")} />
         <Legend swatch="border border-espresso bg-card" label={t("legendPending")} />
+        <Legend swatch="rounded-sm border border-muted bg-card" label={t("legendFederal")} />
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">
@@ -671,6 +712,9 @@ function TeamCalendar({
               <span className="text-sm tabular-nums leading-none">{day}</span>
               <span className="mt-1 flex h-1.5 gap-0.5">
                 {holiday ? <span className="size-1.5 rounded-sm bg-espresso" /> : null}
+                {!holiday && federal.some((f) => f.day === key) ? (
+                  <span className="size-1.5 rounded-sm border border-muted" />
+                ) : null}
                 {mineApproved ? <span className="size-1.5 rounded-full bg-on" /> : null}
                 {others ? <span className="size-1.5 rounded-full bg-muted" /> : null}
                 {pending ? <span className="size-1.5 rounded-full border border-espresso" /> : null}
@@ -683,14 +727,14 @@ function TeamCalendar({
       <div className="mt-4 rounded-xl border border-line bg-paper p-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t("thisDay")}</p>
         <p className="mt-1 font-medium">{fmtDay(focusDay, lang)}</p>
-        {focusHoliday.length === 0 && focusOff.length === 0 && focusPending.length === 0 ? (
+        {focusHoliday.length === 0 && focusOff.length === 0 && focusPending.length === 0 && !focusFederalOpen ? (
           <p className="mt-2 text-sm text-muted">{t("nothingDay")}</p>
         ) : null}
         <ul className="mt-2 space-y-2">
           {focusHoliday.map((h) => (
             <li key={h.day} className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-medium">
-                {t("legendClosed")} · {h.name}
+                {t("legendClosed")} · {nameOf(h)}
               </p>
               {admin ? (
                 confirmHoliday === h.day ? (
@@ -719,6 +763,11 @@ function TeamCalendar({
               ) : null}
             </li>
           ))}
+          {focusFederalOpen ? (
+            <li className="text-sm">
+              {t(`fed_${focusFederalOpen.key}`)} · {t("weAreOpen")}
+            </li>
+          ) : null}
           {focusOff.map((d) => (
             <OffRow
               key={d.id}
@@ -770,6 +819,54 @@ function TeamCalendar({
         >
           {t("requestThisDay")}
         </button>
+      </div>
+
+      <div className="mt-4 border-t border-line pt-4" id="federal-holidays">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">{t("federalTitle", { year })}</h3>
+        <p className="mt-1 text-sm text-muted">{admin ? t("federalLeadAdmin") : t("federalLead")}</p>
+        <ul className="mt-2 divide-y divide-line">
+          {federal.map((f) => {
+            const closed = isClosed(f.day);
+            const label = closed ? t("weAreOff") : t("weAreOpen");
+            return (
+              <li key={f.key} className="flex items-center justify-between gap-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{t(`fed_${f.key}`)}</p>
+                  <p className="text-xs text-muted">{fmtDay(f.day, lang)}</p>
+                </div>
+                {admin ? (
+                  // The switch is the federal-day machine: open <-> off. Off is an ordinary closure row.
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={closed}
+                    aria-label={`${t(`fed_${f.key}`)}: ${label}`}
+                    data-federal={f.key}
+                    disabled={busy}
+                    onClick={() =>
+                      void act(
+                        () =>
+                          closed
+                            ? deleteHoliday({ data: { day: f.day } })
+                            : addHoliday({ data: { day: f.day, name: english(`fed_${f.key}`) } }),
+                        "saved",
+                      )
+                    }
+                    className={
+                      "flex h-11 w-24 shrink-0 items-center gap-2 rounded-full border px-1.5 text-sm font-semibold disabled:opacity-60 " +
+                      (closed ? "flex-row-reverse border-espresso bg-espresso text-foam" : "border-line bg-paper text-muted")
+                    }
+                  >
+                    <span className={"size-7 rounded-full " + (closed ? "bg-foam" : "bg-muted")} aria-hidden="true" />
+                    <span className="flex-1 text-center">{label}</span>
+                  </button>
+                ) : (
+                  <span className={"shrink-0 text-sm font-semibold " + (closed ? "text-ink" : "text-muted")}>{label}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
       {admin ? (
@@ -889,11 +986,129 @@ function TeamPanel({
         {" · "}
         {t("pendingCount", { n: pending })}
       </p>
+      <InvitePanel snap={snap} now={now} busy={busy} act={act} />
       {people.length <= 1 ? <p className="text-sm text-muted">{t("emptyTeam")}</p> : null}
       {people.map((person) => (
         <PersonCard key={person.userId} person={person} snap={snap} now={now} busy={busy} act={act} />
       ))}
     </div>
+  );
+}
+
+function InvitePanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; busy: boolean; act: Act }) {
+  const { t } = useI18n();
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"employee" | "admin">("employee");
+  const invites = snap.invites ?? [];
+  const linkFor = (inv: Invite) => `${window.location.origin}/?invite=${inv.token}`;
+  const send = (to: string, as: Invite["role"]) =>
+    act(() => createInvite({ data: { email: to, role: as } }), snap.emailReady ? "inviteSent" : "inviteCreated");
+
+  return (
+    <section id="invite" className="rounded-2xl border border-line bg-card p-4">
+      <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("inviteTitle")}</h2>
+      <p className="mt-1 text-sm text-pretty text-muted">{snap.emailReady ? t("inviteLead") : t("inviteLeadNoEmail")}</p>
+      <form
+        className="mt-3 space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send(email, role).then((ok) => {
+            if (ok) setEmail("");
+          });
+        }}
+      >
+        <label className="block text-sm font-medium">
+          {t("inviteEmail")}
+          <input
+            id="invite-email"
+            type="email"
+            required
+            autoComplete="off"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className={field}
+          />
+        </label>
+        <div role="group" aria-label={t("role")} className="grid grid-cols-2 gap-2">
+          {(["employee", "admin"] as const).map((r) => (
+            <button
+              key={r}
+              type="button"
+              aria-pressed={role === r}
+              data-role-choice={r}
+              onClick={() => setRole(r)}
+              className={
+                "h-11 rounded-lg text-sm font-semibold " +
+                (role === r ? "bg-espresso text-foam" : "border border-line bg-paper text-ink")
+              }
+            >
+              {t(r)}
+            </button>
+          ))}
+        </div>
+        <button type="submit" disabled={busy} className={solid + " w-full"}>
+          {snap.emailReady ? t("sendInvite") : t("createInvite")}
+        </button>
+      </form>
+
+      {invites.length > 0 ? (
+        <>
+          <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-muted">{t("pendingInvites")}</h3>
+          <ul className="mt-1 divide-y divide-line">
+            {invites.map((inv) => {
+              const expired = inviteState({ acceptedAt: null, expiresAt: inv.expiresAt }, now) === "expired";
+              return (
+              <li key={inv.id} className="space-y-2 py-3" data-invite={inv.email}>
+                <p className="truncate text-sm font-medium">
+                  {inv.email}
+                  <span className="ml-2 font-normal text-muted">
+                    {t(inv.role)}
+                    {expired ? ` · ${t("expired")}` : ""}
+                  </span>
+                </p>
+                {/* Always on screen, so the link can be copied by hand where the clipboard is blocked. */}
+                <input
+                  readOnly
+                  aria-label={t("copyLink")}
+                  value={linkFor(inv)}
+                  onFocus={(e) => e.target.select()}
+                  className="h-10 w-full rounded-lg border border-line bg-paper px-2 text-xs text-muted"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={solid}
+                    onClick={() =>
+                      void navigator.clipboard.writeText(linkFor(inv)).then(
+                        () => toast.success(t("linkCopied")),
+                        () => undefined,
+                      )
+                    }
+                  >
+                    {t("copyLink")}
+                  </button>
+                  {/* Sending again makes a new link, so without email it is only offered to renew an expired one. */}
+                  {snap.emailReady || expired ? (
+                    <button type="button" className={ghost} disabled={busy} onClick={() => void send(inv.email, inv.role)}>
+                      {t("sendAgain")}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={ghost}
+                    disabled={busy}
+                    onClick={() => void act(() => removeInvite({ data: { id: inv.id } }), "removed")}
+                  >
+                    {t("remove")}
+                  </button>
+                </div>
+              </li>
+              );
+            })}
+          </ul>
+        </>
+      ) : null}
+    </section>
   );
 }
 

@@ -1,6 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { PTO_NEXT, canPto, canSetRole, type PtoAction, type PtoStatus } from "@/lib/clock-machine";
+import {
+  INVITE_DAYS,
+  PTO_NEXT,
+  canPto,
+  canSetRole,
+  inviteState,
+  type PtoAction,
+  type PtoStatus,
+} from "@/lib/clock-machine";
 import type { Sql } from "@/lib/db";
 
 export type Role = "admin" | "employee";
@@ -45,9 +53,24 @@ export type OffDay = {
   hours: number;
 };
 
+/** An invitation that has not been accepted yet. Admins only. */
+export type Invite = {
+  id: number;
+  email: string;
+  role: Role;
+  /** Goes in the link: `/?invite=<token>`. */
+  token: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
 export type Snapshot = {
   me: Profile;
   people: Profile[];
+  /** Open invitations (admins only; empty for employees). */
+  invites: Invite[];
+  /** Whether the server can send email. When false, invitations are shared by copying the link. */
+  emailReady: boolean;
   punches: Punch[];
   pto: PtoRequest[];
   holidays: Holiday[];
@@ -73,6 +96,11 @@ const CODES = new Set([
   "already_in",
   "already_out",
   "changed",
+  "bad_email",
+  "already_member",
+  "email_failed",
+  "bad_invite",
+  "invite_email",
   "error",
 ]);
 
@@ -233,9 +261,25 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
     where r.status = 'approved'
     order by r.day asc, full_name asc
   `;
+  const inviteRows = admin
+    ? await sql<Record<string, unknown>>`
+        select id, email, role, token, created_at, expires_at
+        from invites where accepted_at is null order by created_at desc
+      `
+    : [];
+  const { emailConfigured } = await import("@/lib/email.server");
   return {
     me,
     people,
+    invites: inviteRows.map((row) => ({
+      id: num(row.id),
+      email: String(row.email),
+      role: row.role === "admin" ? "admin" : "employee",
+      token: String(row.token),
+      createdAt: iso(row.created_at) ?? "",
+      expiresAt: iso(row.expires_at) ?? "",
+    })),
+    emailReady: emailConfigured(),
     punches: punchRows.map(mapPunch),
     pto: ptoRows.map(mapPto),
     holidays: holidayRows.map((row) => ({ day: dayStr(row.day), name: String(row.name ?? "") })),
@@ -528,4 +572,116 @@ export const deleteHoliday = createServerFn({ method: "POST" })
       const rows = await sql`delete from holidays where day = ${data.day} returning day`;
       if (rows.length === 0) throw new Error("not_found");
     });
+  });
+
+// ---------------------------------------------------------------------------
+// Invitations (invitation machine in clock-machine.ts)
+// ---------------------------------------------------------------------------
+
+/** Where this app is reachable, for links in emails. */
+async function appOrigin(): Promise<string> {
+  const { env } = await import("@/lib/env.server");
+  const fixed = env("BETTER_AUTH_URL");
+  if (fixed) return fixed.replace(/\/+$/, "");
+  const { getRequestHeader } = await import("@tanstack/react-start/server");
+  return getRequestHeader("origin") ?? "";
+}
+
+/** Create an invitation, or refresh the open one for the same address ("send again"). */
+export const createInvite = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    const role = o.role === "admin" || o.role === "employee" ? o.role : "";
+    return { email: typeof o.email === "string" ? o.email : "", role };
+  })
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      const me = await requireAdmin(sql, context.userId);
+      const email = data.email.trim().toLowerCase();
+      if (email.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("bad_email");
+      if (data.role !== "admin" && data.role !== "employee") throw new Error("not_allowed");
+      const member = await sql`select user_id from profiles where lower(email) = ${email}`;
+      if (member.length > 0) throw new Error("already_member");
+      const bytes = crypto.getRandomValues(new Uint8Array(24));
+      const token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      const expires = new Date(Date.now() + INVITE_DAYS * 86_400_000).toISOString();
+      await sql`delete from invites where lower(email) = ${email} and accepted_at is null`;
+      await sql`
+        insert into invites (email, role, token, invited_by, expires_at)
+        values (${email}, ${data.role}, ${token}, ${context.userId}, ${expires})
+      `;
+      const { emailConfigured, inviteEmail, sendEmail } = await import("@/lib/email.server");
+      if (!emailConfigured()) return; // the admin copies the link instead
+      const link = `${await appOrigin()}/?invite=${token}`;
+      // The invitation is saved either way, so a failed send still leaves a link to copy.
+      if (!(await sendEmail(inviteEmail(email, me.fullName, link, INVITE_DAYS)))) throw new Error("email_failed");
+    });
+  });
+
+export const removeInvite = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => ({ id: num(asRecord(raw).id) }))
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      await requireAdmin(sql, context.userId);
+      const rows = await sql`delete from invites where id = ${data.id} and accepted_at is null returning id`;
+      if (rows.length === 0) throw new Error("not_found");
+    });
+  });
+
+/** The signed-in person claims the invitation they arrived with, and gets its role. */
+export const acceptInvite = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    return { token: typeof o.token === "string" ? o.token : "" };
+  })
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      const me = await ensureProfile(sql, context.userId);
+      const rows = data.token
+        ? await sql<Record<string, unknown>>`
+            select id, email, role, accepted_at, expires_at from invites where token = ${data.token}
+          `
+        : [];
+      const row = rows[0];
+      if (!row) throw new Error("bad_invite");
+      const state = inviteState({ acceptedAt: iso(row.accepted_at), expiresAt: iso(row.expires_at) ?? "" }, new Date());
+      if (state !== "open") throw new Error("bad_invite");
+      // The link alone is not enough: it only works for the address it was sent to.
+      if (String(row.email).toLowerCase() !== me.email.toLowerCase()) throw new Error("invite_email");
+      const role = row.role === "admin" ? "admin" : "employee";
+      const left = await sql<{ n: number }>`
+        select count(*) as n from profiles where role = 'admin' and user_id <> ${context.userId}
+      `;
+      if (canSetRole(role, num(left[0]?.n))) {
+        await sql`update profiles set role = ${role} where user_id = ${context.userId}`;
+      }
+      await sql`update invites set accepted_at = now() where id = ${num(row.id)}`;
+    });
+  });
+
+/**
+ * What the sign-in screen needs before anyone is signed in: whether password
+ * reset by email works, and which address an invitation link is for.
+ * No auth: it only answers for someone who already holds the link.
+ */
+export const signInInfo = createServerFn({ method: "GET" })
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    return { token: typeof o.token === "string" ? o.token : "" };
+  })
+  .handler(async ({ data }): Promise<{ emailReady: boolean; invite: { email: string; open: boolean } | null }> => {
+    const { emailConfigured } = await import("@/lib/email.server");
+    const emailReady = emailConfigured();
+    if (!data.token) return { emailReady, invite: null };
+    const sql = await sqlClient();
+    const rows = await sql<Record<string, unknown>>`
+      select email, accepted_at, expires_at from invites where token = ${data.token}
+    `;
+    const row = rows[0];
+    if (!row) return { emailReady, invite: { email: "", open: false } };
+    const state = inviteState({ acceptedAt: iso(row.accepted_at), expiresAt: iso(row.expires_at) ?? "" }, new Date());
+    return { emailReady, invite: { email: state === "open" ? String(row.email) : "", open: state === "open" } };
   });

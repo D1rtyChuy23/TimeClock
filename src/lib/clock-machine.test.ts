@@ -5,6 +5,7 @@ import {
   PTO_NEXT,
   canPto,
   canSetRole,
+  inviteState,
   nextLoad,
   ptoActions,
   shiftAction,
@@ -62,4 +63,11 @@ test("role: the last admin cannot be made an employee", () => {
   assert.ok(!canSetRole("employee", 0));
   assert.ok(canSetRole("employee", 1));
   assert.ok(canSetRole("admin", 0));
+});
+
+test("invitation: open until accepted or 14 days pass", () => {
+  const now = new Date("2026-11-09T12:00:00Z");
+  assert.equal(inviteState({ acceptedAt: null, expiresAt: "2026-11-10T00:00:00Z" }, now), "open");
+  assert.equal(inviteState({ acceptedAt: null, expiresAt: "2026-11-09T11:59:59Z" }, now), "expired");
+  assert.equal(inviteState({ acceptedAt: "2026-11-01T00:00:00Z", expiresAt: "2026-11-02T00:00:00Z" }, now), "accepted");
 });

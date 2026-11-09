@@ -97,3 +97,16 @@ export type Role = "admin" | "employee";
 export function canSetRole(role: Role, otherAdmins: number): boolean {
   return role === "admin" || otherAdmins >= 1;
 }
+
+// ---------------------------------------------------------------------------
+// 5. Invitation: open --accept--> accepted
+//                open --14 days--> expired --send again--> open
+//    Removing an invitation deletes it.
+// ---------------------------------------------------------------------------
+export const INVITE_DAYS = 14;
+export type InviteState = "open" | "expired" | "accepted";
+
+export function inviteState(invite: { acceptedAt: string | null; expiresAt: string }, now: Date): InviteState {
+  if (invite.acceptedAt) return "accepted";
+  return new Date(invite.expiresAt).getTime() > now.getTime() ? "open" : "expired";
+}
