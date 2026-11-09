@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { GROK_PROVIDERS, authClient, signIn } from "@/lib/auth/client";
-import { useI18n } from "@/lib/i18n";
+import { authErrorCopyKey, useI18n } from "@/lib/i18n";
 
 export function AuthScreen() {
   const { t } = useI18n();
@@ -32,7 +32,8 @@ export function AuthScreen() {
               callbackURL: "/",
             });
       if (result.error) {
-        setError(result.error.message || t("errGeneric"));
+        const key = authErrorCopyKey(result.error.code);
+        setError(key ? t(key) : result.error.message || t("errGeneric"));
         return;
       }
       await authClient.getSession();

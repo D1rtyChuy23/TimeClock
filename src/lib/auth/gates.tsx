@@ -87,7 +87,12 @@ export function SignInButtons() {
  * gate-materialized — behind the gate the next request signs the viewer
  * straight back in, so a sign-out control there is a broken loop.
  */
-export function UserButton() {
+export function UserButton({
+  labels = { signOut: "Sign out", signingOut: "Signing out…" },
+}: {
+  /** Pass translated text; the defaults are English. */
+  labels?: { signOut: string; signingOut: string };
+} = {}) {
   const user = useCurrentUser();
   // Sign-out can take a moment (and can fail when deployed), so the control
   // shows it is working and cannot be fired twice.
@@ -124,7 +129,7 @@ export function UserButton() {
           }}
           className="cursor-pointer text-sm underline-offset-4 opacity-70 hover:underline disabled:cursor-wait disabled:no-underline"
         >
-          {signingOut ? "Signing out…" : "Sign out"}
+          {signingOut ? labels.signingOut : labels.signOut}
         </button>
       )}
     </div>

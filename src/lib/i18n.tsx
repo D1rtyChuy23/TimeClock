@@ -102,6 +102,16 @@ const en = {
   errDuplicate: "That day is already on the list.",
   errNotOpen: "They're already clocked out.",
   errNotFound: "That isn't there anymore.",
+  errAlreadyIn: "You were already clocked in.",
+  errAlreadyOut: "You were already clocked out.",
+  errChanged: "Someone already changed that. Here is the latest.",
+  errBadLogin: "That email or password is wrong.",
+  errEmailTaken: "That email already has an account. Sign in instead.",
+  errPasswordShort: "The password needs at least 8 characters.",
+  staleNotice: "No connection. This may be out of date.",
+  reopen: "Undo",
+  signOut: "Sign out",
+  signingOut: "Signing out…",
   saved: "Saved",
   clockedIn: "Clocked in",
   clockedOut: "Clocked out",
@@ -234,6 +244,16 @@ const es: Record<keyof typeof en, string> = {
   requests: "Solicitudes",
   retry: "Reintentar",
   loadError: "No se pudo cargar el reloj.",
+  errAlreadyIn: "Ya habías entrado.",
+  errAlreadyOut: "Ya habías salido.",
+  errChanged: "Alguien ya cambió eso. Aquí está lo más reciente.",
+  errBadLogin: "El correo o la contraseña no son correctos.",
+  errEmailTaken: "Ese correo ya tiene una cuenta. Inicia sesión.",
+  errPasswordShort: "La contraseña necesita al menos 8 caracteres.",
+  staleNotice: "Sin conexión. Esto puede no estar al día.",
+  reopen: "Deshacer",
+  signOut: "Cerrar sesión",
+  signingOut: "Cerrando sesión…",
   earlier: "Días libres recientes",
   status: "Estado",
 };
@@ -316,9 +336,21 @@ const ERROR_KEYS: Record<string, CopyKey> = {
   last_admin: "errLastAdmin",
   duplicate: "errDuplicate",
   not_open: "errNotOpen",
+  already_in: "errAlreadyIn",
+  already_out: "errAlreadyOut",
+  changed: "errChanged",
   error: "errGeneric",
 };
 
 export function errorCopyKey(code: string): CopyKey {
   return ERROR_KEYS[code] ?? "errGeneric";
+}
+
+/** Better Auth error code -> copy, so sign-in problems are explained in the person's language. */
+export function authErrorCopyKey(code: string | undefined): CopyKey | null {
+  if (!code) return null;
+  if (code === "INVALID_EMAIL_OR_PASSWORD") return "errBadLogin";
+  if (code.startsWith("USER_ALREADY_EXISTS")) return "errEmailTaken";
+  if (code === "PASSWORD_TOO_SHORT") return "errPasswordShort";
+  return null;
 }

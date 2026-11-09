@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
+import { PTO_NEXT, canPto, canSetRole, type PtoAction, type PtoStatus } from "@/lib/clock-machine";
 import type { Sql } from "@/lib/db";
 
 export type Role = "admin" | "employee";
@@ -69,6 +70,9 @@ const CODES = new Set([
   "last_admin",
   "duplicate",
   "not_open",
+  "already_in",
+  "already_out",
+  "changed",
   "error",
 ]);
 
@@ -283,23 +287,33 @@ export const togglePunch = createServerFn({ method: "POST" })
   .validator((raw: unknown) => {
     const o = asRecord(raw);
     const target = typeof o.targetUserId === "string" ? o.targetUserId : "";
-    return { targetUserId: target };
+    const action = o.action === "in" || o.action === "out" ? o.action : "";
+    return { targetUserId: target, action };
   })
   .handler(async ({ context, data }): Promise<ClockResult> => {
     return run(context.userId, async (sql) => {
       const me = await ensureProfile(sql, context.userId);
       const target = data.targetUserId && data.targetUserId !== context.userId ? data.targetUserId : context.userId;
       if (target !== context.userId && me.role !== "admin") throw new Error("not_allowed");
-      const closed = await sql<{ id: number }>`
-        update punches set clock_out = now()
-        where user_id = ${target} and clock_out is null
-        returning id
-      `;
-      if (closed.length > 0) return;
-      await sql`
+      // Shift machine (clock-machine.ts): the screen names the direction. With no
+      // action (a page loaded before this change) it still flips, as it used to.
+      if (data.action !== "in") {
+        const closed = await sql<{ id: number }>`
+          update punches set clock_out = now()
+          where user_id = ${target} and clock_out is null
+          returning id
+        `;
+        if (closed.length > 0) return;
+        if (data.action === "out") throw new Error("already_out");
+      }
+      // one_open_punch makes a second open shift a no-op instead of an error.
+      const opened = await sql<{ id: number }>`
         insert into punches (user_id, clock_in, manual, created_by)
         values (${target}, now(), false, ${context.userId})
+        on conflict do nothing
+        returning id
       `;
+      if (opened.length === 0) throw new Error("already_in");
     });
   });
 
@@ -358,12 +372,15 @@ export const cancelPto = createServerFn({ method: "POST" })
       `;
       const row = rows[0];
       if (!row) throw new Error("not_found");
-      const owner = String(row.user_id) === context.userId;
-      const status = String(row.status);
-      const day = dayStr(row.day);
+      // The server does not know the person's time zone, so "today" here is UTC
+      // yesterday: nobody is refused a cancel their own screen still offers.
       const cutoff = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-      const employeeMay = owner && (status === "pending" || (status === "approved" && day >= cutoff));
-      if (me.role !== "admin" && !employeeMay) throw new Error("not_allowed");
+      const who = {
+        owner: String(row.user_id) === context.userId,
+        admin: me.role === "admin",
+        daysUntil: Math.round((Date.parse(dayStr(row.day)) - Date.parse(cutoff)) / 86_400_000),
+      };
+      if (!canPto("cancel", mapPto(row).status, who)) throw new Error("not_allowed");
       await sql`delete from pto_requests where id = ${data.id}`;
     });
   });
@@ -372,20 +389,29 @@ export const decidePto = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((raw: unknown) => {
     const o = asRecord(raw);
-    const status = o.status === "approved" || o.status === "denied" ? o.status : "";
+    const status = o.status === "approved" || o.status === "denied" || o.status === "pending" ? o.status : "";
     return { id: num(o.id), status };
   })
   .handler(async ({ context, data }): Promise<ClockResult> => {
     return run(context.userId, async (sql) => {
       await requireAdmin(sql, context.userId);
-      if (data.status !== "approved" && data.status !== "denied") throw new Error("not_allowed");
+      const action = (Object.keys(PTO_NEXT) as Array<Exclude<PtoAction, "cancel">>).find(
+        (a) => PTO_NEXT[a] === data.status,
+      );
+      if (!action) throw new Error("not_allowed");
+      const found = await sql<{ status: PtoStatus }>`select status from pto_requests where id = ${data.id}`;
+      if (found.length === 0) throw new Error("not_found");
+      // Someone else already decided it: refuse instead of silently overwriting.
+      if (!canPto(action, found[0].status, { owner: false, admin: true, daysUntil: 0 })) {
+        throw new Error("changed");
+      }
       const rows = await sql`
         update pto_requests
-        set status = ${data.status}, decided_by = ${context.userId}
-        where id = ${data.id}
+        set status = ${data.status}, decided_by = ${data.status === "pending" ? null : context.userId}
+        where id = ${data.id} and status = ${found[0].status}
         returning id
       `;
-      if (rows.length === 0) throw new Error("not_found");
+      if (rows.length === 0) throw new Error("changed");
     });
   });
 
@@ -419,12 +445,10 @@ export const setRole = createServerFn({ method: "POST" })
     return run(context.userId, async (sql) => {
       await requireAdmin(sql, context.userId);
       if (!data.userId || (data.role !== "admin" && data.role !== "employee")) throw new Error("not_allowed");
-      if (data.role === "employee") {
-        const left = await sql<{ n: number }>`
-          select count(*) as n from profiles where role = 'admin' and user_id <> ${data.userId}
-        `;
-        if (num(left[0]?.n) < 1) throw new Error("last_admin");
-      }
+      const left = await sql<{ n: number }>`
+        select count(*) as n from profiles where role = 'admin' and user_id <> ${data.userId}
+      `;
+      if (!canSetRole(data.role, num(left[0]?.n))) throw new Error("last_admin");
       const rows = await sql`
         update profiles set role = ${data.role} where user_id = ${data.userId} returning user_id
       `;
