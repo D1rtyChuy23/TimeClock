@@ -1,7 +1,7 @@
-# Team Time Clock
+# Time Clock
 
-Clock in/out, weekly hours, PTO requests and company holidays, in English or Spanish.
+Team clock for a small crew. Clock in and out, see today and this week, request PTO, and share one calendar of shop closures and approved days off. English and Spanish.
 
-Live app: https://d1rtychuy23.github.io/TimeClock/
+This repository is only the Time Clock.
 
-Backend: Supabase project `team-time-clock` (sign-in and data). The key in `index.html` is the public publishable key; access is enforced by database row-level security.
+The running app uses sign-in and a database, so it does not run as a static GitHub Page.
