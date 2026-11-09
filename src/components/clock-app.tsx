@@ -995,6 +995,15 @@ function TeamPanel({
   );
 }
 
+/** A `mailto:` link with the invitation written out, in English and Spanish like the emails the server sends. */
+function inviteMailto(to: string, link: string): string {
+  const subject = "You're invited to the Time Clock / Te invitaron al Reloj";
+  const body =
+    `You're invited to the team Time Clock. Open this link to create your account:\n\n${link}\n\n` +
+    `Te invitaron al Reloj del equipo. Abre este enlace para crear tu cuenta:\n\n${link}\n`;
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 function InvitePanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; busy: boolean; act: Act }) {
   const { t } = useI18n();
   const [email, setEmail] = useState("");
@@ -1075,9 +1084,13 @@ function InvitePanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; busy
                   className="h-10 w-full rounded-lg border border-line bg-paper px-2 text-xs text-muted"
                 />
                 <div className="flex flex-wrap gap-2">
+                  {/* Opens the admin's own email app with the invitation already written. Needs no email setup. */}
+                  <a className={solid} data-email-invite href={inviteMailto(inv.email, linkFor(inv))}>
+                    {t("emailIt")}
+                  </a>
                   <button
                     type="button"
-                    className={solid}
+                    className={ghost}
                     onClick={() =>
                       void navigator.clipboard.writeText(linkFor(inv)).then(
                         () => toast.success(t("linkCopied")),

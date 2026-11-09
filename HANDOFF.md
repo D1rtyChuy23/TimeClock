@@ -70,7 +70,7 @@ Set these where the app is deployed:
 | `RESEND_API_KEY` | An API key from resend.com |
 | `EMAIL_FROM` | A sender Resend has verified, for example `Time Clock <clock@yourdomain.com>` |
 
-Until both are set, nothing is emailed and the app says so: invitations are created with a link the admin copies and sends, and the sign-in screen says password reset by email is not set up. In local development (no key) each message is printed in the server log instead.
+Until both are set, the server emails nothing. Invitations still go out by email another way: each pending invitation has an **Email it** button, a `mailto:` link that opens the admin's own email app with the message already written (and a Copy link button beside it), and the sign-in screen says password reset by email is not set up. In local development (no key) each message is printed in the server log instead.
 
 ---
 
