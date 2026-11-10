@@ -116,7 +116,7 @@ export function inviteState(invite: { acceptedAt: string | null; expiresAt: stri
 //    fall back to the clock for everyone else. The section is kept in the
 //    address as `#reports` and so on, so a refresh or a bookmark opens it.
 // ---------------------------------------------------------------------------
-export const VIEWS = ["clock", "timeoff", "calendar", "daysoff", "team", "invite", "reports"] as const;
+export const VIEWS = ["clock", "timeoff", "settings", "calendar", "daysoff", "team", "invite", "reports"] as const;
 export type View = (typeof VIEWS)[number];
 export const ADMIN_VIEWS: ReadonlySet<View> = new Set<View>(["team", "invite", "reports"]);
 

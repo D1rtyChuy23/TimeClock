@@ -8,6 +8,7 @@ import {
   Clock as ClockIcon,
   Menu,
   PenLine,
+  SlidersHorizontal,
   TreePalm,
   UserPlus,
   Users,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { INVITE_KEY } from "@/components/auth-screen";
+import { SettingsPanel } from "@/components/settings-panel";
 import { UserButton } from "@/lib/auth/gates";
 import {
   ADMIN_VIEWS,
@@ -283,7 +285,7 @@ export function ClockApp() {
               aria-expanded={menuOpen}
               aria-controls="menu-drawer"
               onClick={() => setMenuOpen(true)}
-              className="flex h-11 min-w-0 items-center gap-2 rounded-lg border border-bar-ink/30 px-3 text-sm font-semibold md:hidden"
+              className="flex h-11 min-w-0 shrink items-center gap-2 rounded-lg border border-bar-ink/30 px-3 text-sm font-semibold md:hidden"
             >
               <Menu className="size-5 shrink-0" aria-hidden="true" />
               <span className="sr-only">{t("menu")}: </span>
@@ -300,7 +302,17 @@ export function ClockApp() {
             {t("appName")}
           </p>
           <div className="flex shrink-0 items-center gap-2">
-            <div role="group" aria-label={t("language")} className="flex overflow-hidden rounded-lg border border-bar-ink/30">
+            {/* Phones get one switch button so the menu button keeps its label, even with large text. */}
+            <button
+              type="button"
+              id="lang-switch"
+              onClick={() => setLang(lang === "en" ? "es" : "en")}
+              aria-label={lang === "en" ? "Español" : "English"}
+              className="h-11 min-w-11 rounded-lg border border-bar-ink/30 px-3 text-sm font-semibold sm:hidden"
+            >
+              {lang === "en" ? "ES" : "EN"}
+            </button>
+            <div role="group" aria-label={t("language")} className="hidden overflow-hidden rounded-lg border border-bar-ink/30 sm:flex">
               {(["en", "es"] as const).map((code) => (
                 <button
                   key={code}
@@ -375,6 +387,8 @@ export function ClockApp() {
                   go("timeoff");
                 }}
               />
+            ) : view === "settings" ? (
+              <SettingsPanel />
             ) : view === "daysoff" ? (
               <DaysOffPanel snap={snap} now={now} busy={busy} act={act} />
             ) : view === "team" && admin ? (
@@ -396,6 +410,7 @@ export function ClockApp() {
 const NAV_LABEL: Record<View, CopyKey> = {
   clock: "navClock",
   timeoff: "navTimeOff",
+  settings: "navSettings",
   calendar: "navCalendar",
   daysoff: "navDaysOff",
   team: "navTeam",
@@ -405,6 +420,7 @@ const NAV_LABEL: Record<View, CopyKey> = {
 const NAV_ICON: Record<View, LucideIcon> = {
   clock: ClockIcon,
   timeoff: TreePalm,
+  settings: SlidersHorizontal,
   calendar: CalendarDays,
   daysoff: CalendarOff,
   team: Users,
@@ -412,7 +428,7 @@ const NAV_ICON: Record<View, LucideIcon> = {
   reports: ChartColumn,
 };
 const NAV_GROUPS: Array<{ label: CopyKey; views: View[] }> = [
-  { label: "groupYou", views: ["clock", "timeoff"] },
+  { label: "groupYou", views: ["clock", "timeoff", "settings"] },
   { label: "groupEveryone", views: ["calendar", "daysoff"] },
   { label: "groupAdmin", views: ["team", "invite", "reports"] },
 ];
@@ -630,9 +646,9 @@ function Mine({
           ).map(([key, value], n) => (
             <div key={key} className={"px-2 py-3 text-center " + (n > 0 ? "border-l border-dashed border-line" : "")}>
               <dt className="text-xs font-semibold text-muted">{t(key)}</dt>
-              <dd className="mt-0.5 font-display text-3xl font-bold tabular-nums">
-                {fmtHours(value)}
-                <span className="ml-1 font-sans text-xs font-medium text-muted">{t("hours")}</span>
+              <dd className="mt-0.5 flex flex-wrap items-baseline justify-center gap-x-1">
+                <span className="font-display text-3xl font-bold tabular-nums">{fmtHours(value)}</span>
+                <span className="text-xs font-medium text-muted">{t("hours")}</span>
               </dd>
             </div>
           ))}

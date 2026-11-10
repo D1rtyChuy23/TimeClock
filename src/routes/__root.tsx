@@ -2,6 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-r
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
+import { APPEARANCE_BOOT_SCRIPT } from "@/lib/appearance";
 import { LanguageProvider } from "@/lib/i18n";
 import { xBannerUrl } from "@/lib/og/x-banner";
 import appCss from "../styles.css?url";
@@ -36,6 +37,8 @@ export const Route = createRootRoute({
   component: () => (
     <html lang="es" suppressHydrationWarning>
       <head>
+        {/* Display settings (src/lib/appearance.ts) before first paint, so a saved scheme never flashes. */}
+        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
         <HeadContent />
       </head>
       <body>
