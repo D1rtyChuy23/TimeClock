@@ -73,13 +73,16 @@ The first account ever created becomes the admin.
 
 All colors are tokens in `src/styles.css`. Components use only the tokens, never raw hex values, so every screen works in every scheme.
 
-**Three color schemes**, each with a light and a dark version, chosen in Settings:
+**Four color schemes**, each with a light and a dark version, chosen in Settings. Every text color passes WCAG AA (4.5:1) on its background in both versions.
 
-| Scheme | Palette |
+| Scheme | Look |
 |---|---|
-| `classic` (default) | [navy, red, orange, gold, cream](https://coolors.co/palette/003049-d62828-f77f00-fcbf49-eae2b7) |
-| `forest` | [greens](https://coolors.co/palette/132a13-31572c-4f772d-90a955-ecf39e) |
+| `harbor` (default) | Deep navy with a marigold Clock in button |
+| `mint` | Near-black ink with a fresh green Clock in button |
+| `violet` | Deep plum with a soft violet Clock in button |
 | `contrast` | High contrast: black and white with a yellow accent; edges drawn in full, links underlined |
+
+Saved choices from older versions (`classic`, `forest`) fall back to `harbor`.
 
 | Token | Use |
 |---|---|
@@ -90,13 +93,13 @@ All colors are tokens in `src/styles.css`. Components use only the tokens, never
 | `leaf-text` | Small emphasis on paper, such as "On the clock" |
 | `bar` + `bar-ink` | The header and the sign-in band |
 
-To add a scheme: add its swatches to `SCHEME_SWATCHES` and its name to `SCHEMES` in `src/lib/appearance.ts`, add `scheme_<name>` and `scheme_<name>Note` text in both languages, and add three blocks to `styles.css` (light, dark when the device is dark, dark when chosen), copying the `forest` ones.
+To add a scheme: add its swatches to `SCHEME_SWATCHES` and its name to `SCHEMES` in `src/lib/appearance.ts`, add `scheme_<name>` and `scheme_<name>Note` text in both languages, and add three blocks to `styles.css` (light, dark when the device is dark, dark when chosen), copying the `mint` ones.
 
 **Display settings** (`src/lib/appearance.ts`, screen in `src/components/settings-panel.tsx`) are saved on the device in `localStorage` (`tc-appearance`), not on the account. They are applied as attributes on `<html>`:
 
 | Attribute | Values | Effect |
 |---|---|---|
-| `data-scheme` | `classic`, `forest`, `contrast` | Color scheme |
+| `data-scheme` | `harbor`, `mint`, `violet`, `contrast` | Color scheme |
 | `data-mode` | `light`, `dark`, or absent | Absent follows the device |
 | `data-text` | `default`, `large` (112.5%), `xlarge` (125%) | Root font size, so text, spacing and buttons all scale |
 | `data-density` | `compact`, `comfortable`, `roomy` | Tailwind's `--spacing` (0.2 / 0.25 / 0.3 rem), which sizes padding, gaps and button heights |

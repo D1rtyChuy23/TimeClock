@@ -4,6 +4,7 @@
  * Color schemes. Every component uses only these tokens, so a scheme is just a
  * set of values. Choose one in Settings (data-scheme on <html>); light or dark
  * follows the device unless data-mode is set. See src/lib/appearance.ts.
+ * Harbor is the default (also used when no scheme is saved).
  *
  * Token roles
  *   paper / paper-2 / card   page, tinted surfaces, sections
@@ -14,127 +15,179 @@
  *   bar + bar-ink            the header bar and its text
  */
 
-/* Classic: https://coolors.co/palette/003049-d62828-f77f00-fcbf49-eae2b7
- *   #003049 navy · #d62828 red · #f77f00 orange · #fcbf49 gold · #eae2b7 cream */
-:root {
+/* Mint: Ink with a fresh green */
+:root[data-scheme="mint"] {
   color-scheme: light;
-  --paper: #eae2b7;
-  --paper-2: #fcbf49;
-  --ink: #003049;
-  --muted: color-mix(in srgb, #003049 68%, #eae2b7);
-  --line: color-mix(in srgb, #003049 22%, #fcbf49);
-  --card: color-mix(in srgb, #eae2b7 78%, white);
-  --pine: #003049;
-  --foam: #eae2b7;
-  --leaf: #f77f00;
-  --leaf-ink: #003049;
-  --leaf-text: #d62828;
-  --bar: #003049;
-  --bar-ink: #eae2b7;
+  --paper: #f4f6f5;
+  --paper-2: #e3f5ec;
+  --ink: #14201c;
+  --muted: #5a6863;
+  --line: #d9e2de;
+  --card: #ffffff;
+  --pine: #14201c;
+  --foam: #ffffff;
+  --leaf: #22b07d;
+  --leaf-ink: #062a1d;
+  --leaf-text: #0e7a54;
+  --bar: #14201c;
+  --bar-ink: #f4f6f5;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-mode="light"]) {
+  :root[data-scheme="mint"]:not([data-mode="light"]) {
     color-scheme: dark;
-    --paper: #003049;
-    --paper-2: color-mix(in srgb, #003049 72%, #000);
-    --ink: #eae2b7;
-    --muted: color-mix(in srgb, #eae2b7 68%, #003049);
-    --line: color-mix(in srgb, #fcbf49 40%, #003049);
-    --card: color-mix(in srgb, #003049 78%, #eae2b7);
-    --pine: #fcbf49;
-    --foam: #003049;
-    --leaf: #f77f00;
-    --leaf-ink: #003049;
-    --leaf-text: #fcbf49;
-    --bar: color-mix(in srgb, #003049 70%, #000);
-    --bar-ink: #eae2b7;
+    --paper: #0f1513;
+    --paper-2: #123326;
+    --ink: #e9f1ed;
+    --muted: #9aaba4;
+    --line: #26332e;
+    --card: #17201c;
+    --pine: #e9f1ed;
+    --foam: #0f1513;
+    --leaf: #35c991;
+    --leaf-ink: #042419;
+    --leaf-text: #5ad8a7;
+    --bar: #0a0e0d;
+    --bar-ink: #e9f1ed;
   }
 }
-:root[data-mode="dark"] {
+:root[data-scheme="mint"][data-mode="dark"] {
   color-scheme: dark;
-  --paper: #003049;
-  --paper-2: color-mix(in srgb, #003049 72%, #000);
-  --ink: #eae2b7;
-  --muted: color-mix(in srgb, #eae2b7 68%, #003049);
-  --line: color-mix(in srgb, #fcbf49 40%, #003049);
-  --card: color-mix(in srgb, #003049 78%, #eae2b7);
-  --pine: #fcbf49;
-  --foam: #003049;
-  --leaf: #f77f00;
-  --leaf-ink: #003049;
-  --leaf-text: #fcbf49;
-  --bar: color-mix(in srgb, #003049 70%, #000);
-  --bar-ink: #eae2b7;
+  --paper: #0f1513;
+  --paper-2: #123326;
+  --ink: #e9f1ed;
+  --muted: #9aaba4;
+  --line: #26332e;
+  --card: #17201c;
+  --pine: #e9f1ed;
+  --foam: #0f1513;
+  --leaf: #35c991;
+  --leaf-ink: #042419;
+  --leaf-text: #5ad8a7;
+  --bar: #0a0e0d;
+  --bar-ink: #e9f1ed;
 }
 
-/* Forest: https://coolors.co/palette/132a13-31572c-4f772d-90a955-ecf39e
- *   #132a13 deep green · #31572c pine · #4f772d moss · #90a955 leaf · #ecf39e lime cream */
-:root[data-scheme="forest"] {
+/* Harbor: Navy with marigold */
+:root,
+:root[data-scheme="harbor"] {
   color-scheme: light;
-  --paper: color-mix(in srgb, #ecf39e 38%, white);
-  --paper-2: #ecf39e;
-  --ink: #132a13;
-  --muted: color-mix(in srgb, #132a13 70%, #ecf39e);
-  --line: color-mix(in srgb, #4f772d 32%, #ecf39e);
-  --card: color-mix(in srgb, #ecf39e 14%, white);
-  --pine: #31572c;
-  --foam: #ecf39e;
-  --leaf: #90a955;
-  --leaf-ink: #132a13;
-  --leaf-text: #31572c;
-  --bar: #132a13;
-  --bar-ink: #ecf39e;
+  --paper: #f3f5f9;
+  --paper-2: #fff1cc;
+  --ink: #0b2545;
+  --muted: #55657e;
+  --line: #d8dfea;
+  --card: #ffffff;
+  --pine: #0b2545;
+  --foam: #ffffff;
+  --leaf: #ffb703;
+  --leaf-ink: #1f1400;
+  --leaf-text: #b45309;
+  --bar: #0b2545;
+  --bar-ink: #f3f5f9;
 }
 @media (prefers-color-scheme: dark) {
-  :root[data-scheme="forest"]:not([data-mode="light"]) {
+  :root:not([data-mode="light"]),
+    :root[data-scheme="harbor"]:not([data-mode="light"]) {
     color-scheme: dark;
-    --paper: #132a13;
-    --paper-2: color-mix(in srgb, #132a13 70%, #000);
-    --ink: #ecf39e;
-    --muted: color-mix(in srgb, #ecf39e 68%, #132a13);
-    --line: color-mix(in srgb, #4f772d 70%, #132a13);
-    --card: color-mix(in srgb, #31572c 55%, #132a13);
-    --pine: #ecf39e;
-    --foam: #132a13;
-    --leaf: #90a955;
-    --leaf-ink: #132a13;
-    --leaf-text: #90a955;
-    --bar: color-mix(in srgb, #132a13 70%, #000);
-    --bar-ink: #ecf39e;
+    --paper: #0a1628;
+    --paper-2: #2b2410;
+    --ink: #e8eef7;
+    --muted: #9fb0c8;
+    --line: #22385a;
+    --card: #10213a;
+    --pine: #e8eef7;
+    --foam: #0a1628;
+    --leaf: #ffc43d;
+    --leaf-ink: #1f1400;
+    --leaf-text: #ffc43d;
+    --bar: #060f1d;
+    --bar-ink: #e8eef7;
   }
 }
-:root[data-scheme="forest"][data-mode="dark"] {
+:root[data-mode="dark"],
+:root[data-scheme="harbor"][data-mode="dark"] {
   color-scheme: dark;
-  --paper: #132a13;
-  --paper-2: color-mix(in srgb, #132a13 70%, #000);
-  --ink: #ecf39e;
-  --muted: color-mix(in srgb, #ecf39e 68%, #132a13);
-  --line: color-mix(in srgb, #4f772d 70%, #132a13);
-  --card: color-mix(in srgb, #31572c 55%, #132a13);
-  --pine: #ecf39e;
-  --foam: #132a13;
-  --leaf: #90a955;
-  --leaf-ink: #132a13;
-  --leaf-text: #90a955;
-  --bar: color-mix(in srgb, #132a13 70%, #000);
-  --bar-ink: #ecf39e;
+  --paper: #0a1628;
+  --paper-2: #2b2410;
+  --ink: #e8eef7;
+  --muted: #9fb0c8;
+  --line: #22385a;
+  --card: #10213a;
+  --pine: #e8eef7;
+  --foam: #0a1628;
+  --leaf: #ffc43d;
+  --leaf-ink: #1f1400;
+  --leaf-text: #ffc43d;
+  --bar: #060f1d;
+  --bar-ink: #e8eef7;
 }
 
-/* High contrast: black and white with a yellow accent, for anyone who needs
- * the strongest difference between text and background. */
+/* Violet: Deep plum with soft violet */
+:root[data-scheme="violet"] {
+  color-scheme: light;
+  --paper: #f6f4f9;
+  --paper-2: #ece6fb;
+  --ink: #231a35;
+  --muted: #625a73;
+  --line: #e2dcec;
+  --card: #ffffff;
+  --pine: #2f2150;
+  --foam: #ffffff;
+  --leaf: #a78bfa;
+  --leaf-ink: #160d2e;
+  --leaf-text: #6d3fd9;
+  --bar: #231a35;
+  --bar-ink: #f6f4f9;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme="violet"]:not([data-mode="light"]) {
+    color-scheme: dark;
+    --paper: #14101d;
+    --paper-2: #2a2045;
+    --ink: #efeaf8;
+    --muted: #aaa1bd;
+    --line: #2e2642;
+    --card: #1c1729;
+    --pine: #efeaf8;
+    --foam: #14101d;
+    --leaf: #b69dff;
+    --leaf-ink: #160d2e;
+    --leaf-text: #c4b0ff;
+    --bar: #0d0a14;
+    --bar-ink: #efeaf8;
+  }
+}
+:root[data-scheme="violet"][data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #14101d;
+  --paper-2: #2a2045;
+  --ink: #efeaf8;
+  --muted: #aaa1bd;
+  --line: #2e2642;
+  --card: #1c1729;
+  --pine: #efeaf8;
+  --foam: #14101d;
+  --leaf: #b69dff;
+  --leaf-ink: #160d2e;
+  --leaf-text: #c4b0ff;
+  --bar: #0d0a14;
+  --bar-ink: #efeaf8;
+}
+
+/* Contrast: Black and white with yellow. The easiest to read. */
 :root[data-scheme="contrast"] {
   color-scheme: light;
   --paper: #ffffff;
-  --paper-2: #fff2a8;
+  --paper-2: #fff3b0;
   --ink: #000000;
-  --muted: #1f1f1f;
+  --muted: #262626;
   --line: #000000;
   --card: #ffffff;
   --pine: #000000;
   --foam: #ffffff;
-  --leaf: #ffd400;
+  --leaf: #ffd60a;
   --leaf-ink: #000000;
-  --leaf-text: #a00000;
+  --leaf-text: #b00000;
   --bar: #000000;
   --bar-ink: #ffffff;
 }
@@ -142,16 +195,16 @@
   :root[data-scheme="contrast"]:not([data-mode="light"]) {
     color-scheme: dark;
     --paper: #000000;
-    --paper-2: #2b2600;
+    --paper-2: #332b00;
     --ink: #ffffff;
-    --muted: #e8e8e8;
+    --muted: #e6e6e6;
     --line: #ffffff;
     --card: #000000;
     --pine: #ffffff;
     --foam: #000000;
-    --leaf: #ffd400;
+    --leaf: #ffd60a;
     --leaf-ink: #000000;
-    --leaf-text: #ffd400;
+    --leaf-text: #ffd60a;
     --bar: #000000;
     --bar-ink: #ffffff;
   }
@@ -159,19 +212,20 @@
 :root[data-scheme="contrast"][data-mode="dark"] {
   color-scheme: dark;
   --paper: #000000;
-  --paper-2: #2b2600;
+  --paper-2: #332b00;
   --ink: #ffffff;
-  --muted: #e8e8e8;
+  --muted: #e6e6e6;
   --line: #ffffff;
   --card: #000000;
   --pine: #ffffff;
   --foam: #000000;
-  --leaf: #ffd400;
+  --leaf: #ffd60a;
   --leaf-ink: #000000;
-  --leaf-text: #ffd400;
+  --leaf-text: #ffd60a;
   --bar: #000000;
   --bar-ink: #ffffff;
 }
+
 /* In high contrast every edge is drawn in full, and links are underlined. */
 :root[data-scheme="contrast"] .panel {
   box-shadow: 0 0 0 2px var(--line);
