@@ -4,7 +4,7 @@
  * Saved on this device (localStorage `tc-appearance`) and applied as
  * `data-*` attributes on <html>, which `src/styles.css` reads:
  *   data-mode     light | dark          (absent = follow the device)
- *   data-scheme   classic | forest | contrast
+ *   data-scheme   harbor | mint | violet | contrast
  *   data-text     default | large | xlarge
  *   data-density  compact | comfortable | roomy
  *   data-motion   reduce                (absent = follow the device)
@@ -16,7 +16,7 @@
 export const APPEARANCE_KEY = "tc-appearance";
 
 export const MODES = ["system", "light", "dark"] as const;
-export const SCHEMES = ["classic", "forest", "contrast"] as const;
+export const SCHEMES = ["harbor", "mint", "violet", "contrast"] as const;
 export const TEXT_SIZES = ["default", "large", "xlarge"] as const;
 export const DENSITIES = ["compact", "comfortable", "roomy"] as const;
 export const MOTIONS = ["system", "reduce"] as const;
@@ -31,21 +31,28 @@ export type Appearance = {
 
 export const DEFAULT_APPEARANCE: Appearance = {
   mode: "system",
-  scheme: "classic",
+  scheme: "harbor",
   text: "default",
   density: "comfortable",
   motion: "system",
 };
 
 /** The swatches shown for each scheme in Settings (light theme). */
+/** The swatches shown for each scheme in Settings: ink, accent, tint, page, and the dark page. */
 export const SCHEME_SWATCHES: Record<Appearance["scheme"], string[]> = {
-  classic: ["#003049", "#d62828", "#f77f00", "#fcbf49", "#eae2b7"],
-  forest: ["#132a13", "#31572c", "#4f772d", "#90a955", "#ecf39e"],
-  contrast: ["#000000", "#ffffff", "#ffd400", "#a00000", "#0047ab"],
+  harbor: ["#0b2545", "#ffb703", "#fff1cc", "#f3f5f9", "#0a1628"],
+  mint: ["#14201c", "#22b07d", "#e3f5ec", "#f4f6f5", "#0f1513"],
+  violet: ["#231a35", "#a78bfa", "#ece6fb", "#f6f4f9", "#14101d"],
+  contrast: ["#000000", "#ffd60a", "#fff3b0", "#ffffff", "#000000"],
 };
 
 /** The browser bar color for each scheme. */
-const BAR_COLOR: Record<Appearance["scheme"], string> = { classic: "#003049", forest: "#132a13", contrast: "#000000" };
+const BAR_COLOR: Record<Appearance["scheme"], string> = {
+  harbor: "#0b2545",
+  mint: "#14201c",
+  violet: "#231a35",
+  contrast: "#000000",
+};
 
 function pick<T extends string>(allowed: readonly T[], value: unknown, fallback: T): T {
   return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
