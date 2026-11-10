@@ -13,14 +13,15 @@ A time clock for a small team (about 9 people: 3 admins, 6 employees). It must s
 **Everyone**
 - Signs in with email and password (or Google / X); "Forgot your password?" emails a reset link
 - One big **Clock in / Clock out** button
-- Sees hours today, hours this week (Monday–Sunday) and PTO hours left this year
-- Requests PTO, and can cancel a request while it is pending, or an approved one until the day has passed
+- Sees hours today, this week (Monday–Sunday) and this pay period (worked hours plus approved PTO), and PTO days left this year
+- Requests PTO **one whole day at a time** (each day is paid as 8 hours; no hours box), and can cancel a request while it is pending, or an approved one until the day has passed
 - Sees a shared calendar of shop closures and approved days off (pending requests stay private)
 
 **Admins** also get a **Team** tab
 - Who is on the clock, hours this week and last week, pending request counts
-- Per person: approve or deny PTO, **Undo** a decision (back to pending), set the yearly PTO allowance, clock someone out, add a missed shift (16 hours max), delete a shift, make someone an admin or employee
+- Per person: approve or deny PTO, **Undo** a decision (back to pending), set **PTO days per year**, clock someone out, add a missed shift (16 hours max), delete a shift, make someone an admin or employee
 - Add and delete shop closures on the calendar
+- **Reports** tab: hours for everyone in a pay period (week 1, week 2, PTO days, total to pay, PTO days left), missed punches, and two spreadsheet downloads (hours per person, every shift). Arrows move between pay periods.
 - **Invite people** by email with a role (employee or admin); see who has not joined yet, copy the link, send again, or remove the invitation
 - **Federal holidays:** the 11 US federal holidays are listed for each year with a switch. Off means the shop is closed that day. They start as Open.
 
@@ -46,6 +47,7 @@ The first account ever created becomes the admin.
 | `src/components/auth-screen.tsx` | Sign in / create account |
 | `src/lib/i18n.tsx` | All text, English and Spanish, plus error-code-to-text maps |
 | `src/lib/time.ts` | Hours and date helpers with a built-in `selfCheck()` |
+| `src/lib/pay-period.ts` | **Pay periods, PTO days and the payroll report.** Pure and tested. Start here for anything about pay. |
 | `src/lib/federal-holidays.ts` | The federal holiday dates for any year (pure, tested) |
 | `src/lib/email.server.ts` | Outgoing email through Resend, plus the invitation and reset messages (English and Spanish in one email) |
 | `src/lib/auth/reset-password.server.ts` | Password-reset options handed to Better Auth |
@@ -85,7 +87,25 @@ Until both are set, the server emails nothing. Invitations still go out by email
 
 ---
 
-## 3. State machines: read this before changing any flow
+## 3. Pay periods and PTO
+
+All in `src/lib/pay-period.ts` (tested in `pay-period.test.ts`):
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `PAY_ANCHOR` | `2026-11-09` | The Monday the bi-weekly cycle started. Every period starts a multiple of 14 days from here, forward and back. |
+| `PERIOD_DAYS` | 14 | Pay is every two weeks, Monday through the second Sunday. |
+| `PTO_DAY_HOURS` | 8 | One PTO day is paid as 8 hours. |
+| `LONG_SHIFT_HOURS` | 12 | A finished shift longer than this is flagged as a likely missed clock-out. |
+
+- **PTO is stored in hours.** `pto_requests.hours` is always 8 for new requests (the server sets it; the screen sends only the day), and `profiles.pto_allowance` holds days × 8. The screens and the report divide by `PTO_DAY_HOURS`. Requests made before this change may hold other hour amounts; they still count correctly.
+- **One request per day:** asking for a day that already has a pending or approved request returns `duplicate`.
+- **`setAllowance` takes `days`.** It still accepts `hours` so an old open page keeps working.
+- **The report** is fetched by `loadReport` (admin only, at most 40 days) and computed in the browser by `buildPayReport()`, because pay-period days are the shop's local days and the server does not know the time zone. Total to pay = worked hours + approved PTO hours in the period.
+- **Missed punches** (`missedKind()`): `open` = still clocked in from an earlier day (counts **0 hours** until an admin fixes it, so a forgotten clock-out never inflates pay); `long` = a finished shift over 12 hours; `manual` = a shift an admin typed in, listed so it can be double-checked.
+- Downloads are CSV with a byte-order mark so Excel shows Spanish accents correctly. Times are written as `YYYY-MM-DD HH:MM` in local time.
+
+## 4. State machines: read this before changing any flow
 
 The rules live in **`src/lib/clock-machine.ts`**. The server functions use them to decide what is allowed, and the screens use the same functions to decide which buttons to draw. Change a flow there, then run the tests.
 
@@ -131,15 +151,15 @@ The root element of the signed-in app carries the live state. Wait on these inst
 |---|---|
 | `data-status` | `booting`, `failed`, `ready`, `stale` |
 | `data-busy` | `true`, `false` |
-| `data-tab` | `mine`, `team` |
+| `data-tab` | `mine`, `team`, `reports` |
 | `data-role` | `admin`, `employee` |
 | `data-shift` | `in`, `out` |
 
-Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-hours`, `#pto-note`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
+Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|manual"`), `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
 
 ---
 
-## 4. Server functions (`src/lib/timeclock.functions.ts`)
+## 5. Server functions (`src/lib/timeclock.functions.ts`)
 
 Every function runs behind `authMiddleware`, takes the caller's id from the session (never from the request), and reads the caller's role from the database. Admin-only functions call `requireAdmin()`.
 
@@ -150,7 +170,7 @@ Every function runs behind `authMiddleware`, takes the caller's id from the sess
 
 ---
 
-## 5. Running and checking
+## 6. Running and checking
 
 ```
 npm install
@@ -162,14 +182,14 @@ npm run lint
 Unit tests for the app code:
 
 ```
-node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/preview-path-prefix.test.ts src/lib/clock-machine.test.ts src/lib/federal-holidays.test.ts
+node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/preview-path-prefix.test.ts src/lib/clock-machine.test.ts src/lib/federal-holidays.test.ts src/lib/pay-period.test.ts
 ```
 
 `npm test` runs the scaffold's script tests first. Outside a Grok Build workspace 17 of those fail because they read `.grok/` files that are not in this repository, and `npm test` then stops before it reaches the app tests. Use the command above to run the app tests on their own.
 
 ---
 
-## 6. Rules for changes
+## 7. Rules for changes
 
 - Keep it simple for employees: one obvious button, no extra steps.
 - **Every user-facing string goes in `en` and `es`** in `i18n.tsx`. The `es` table is typed against `en`, so a missing translation fails `npm run typecheck`.
@@ -177,7 +197,11 @@ node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib
 - Never trust the client for who someone is or what role they hold.
 - Keep clock in/out on the database clock, and keep sending `action`.
 
-## 7. Known gaps
+## 8. Known gaps
+
+- There is no pay day, overtime rule, or holiday pay in the report. Week 1 and week 2 are shown separately so hours over 40 in a week are easy to spot.
+- To fix a shift left open from an earlier day, an admin deletes it on the Team tab and adds the correct shift; "Clock them out" would end it at the current time.
+- The report only covers the current and earlier pay periods.
 
 - Emailed invitations and password reset need the two email variables above. Real delivery through Resend has not been tested.
 - Federal holidays use the actual calendar date, not the "observed" weekday when one lands on a weekend.
@@ -186,11 +210,11 @@ node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib
 - Two people signing up at the same instant as the very first accounts could both become admin. The Team tab can fix it.
 - Missed shifts added by an admin are not checked for overlap with existing shifts.
 
-## 8. Test status
+## 9. Test status
 
-- App unit tests: 70 of 70 pass (state machines, federal holiday dates).
-- End to end, in a headless browser against `npm run dev` with real sign-up and the embedded database, on 2026-11-09:
-  - Invitations, federal holidays, sign-in screen and password reset: 31 of 31. Covered: invite as admin and as employee, copy link, the link opening with the email locked, role applied, a used link, someone else's link, remove; the 11 holidays, switching one off and on, the banner, Spanish names, the employee view; requesting a reset, the link, saving a new password, old password refused, a used reset link.
-  - The same run with email switched on and a fake key: 25 of 26. The emailed paths behave (a failed send tells the admin to copy the link; "forgot" answers the same for unknown addresses). The one miss is the test itself, which cannot read a reset link once email is on.
-  - Clock in/out, time off, lost connection and the rest from the earlier round: still passing.
+- App unit tests: 76 of 76 pass (state machines, federal holiday dates, pay periods and the report, including daylight-saving weeks and three time zones).
+- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-09:
+  - Pay periods, PTO days and reports: 21 of 21. Covered: the current period (Nov 9 – Nov 22, 2026) on My time, PTO requested by the day, the same day twice refused, days per year set by an admin, approval, days left, the report row (8.50 worked + 2 PTO days = 24.50 to pay), the missed-punch list, both downloads and their contents, moving between periods, Spanish, and phone width.
+  - Invitations, federal holidays, sign-in and password reset: 32 of 32.
+  - Clock in/out, time off, lost connection and sign-in errors: 26 of 26.
 - Not tested: real email delivery, a deployed build on Neon, Google / X sign-in.
