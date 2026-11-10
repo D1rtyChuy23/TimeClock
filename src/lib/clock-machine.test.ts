@@ -6,6 +6,7 @@ import {
   canPto,
   canSetRole,
   inviteState,
+  viewFor,
   nextLoad,
   ptoActions,
   shiftAction,
@@ -70,4 +71,12 @@ test("invitation: open until accepted or 14 days pass", () => {
   assert.equal(inviteState({ acceptedAt: null, expiresAt: "2026-11-10T00:00:00Z" }, now), "open");
   assert.equal(inviteState({ acceptedAt: null, expiresAt: "2026-11-09T11:59:59Z" }, now), "expired");
   assert.equal(inviteState({ acceptedAt: "2026-11-01T00:00:00Z", expiresAt: "2026-11-02T00:00:00Z" }, now), "accepted");
+});
+
+test("section: unknown and admin-only sections fall back to the clock", () => {
+  assert.equal(viewFor("reports", true), "reports");
+  assert.equal(viewFor("reports", false), "clock");
+  assert.equal(viewFor("daysoff", false), "daysoff");
+  assert.equal(viewFor("", true), "clock");
+  assert.equal(viewFor("settings", true), "clock");
 });

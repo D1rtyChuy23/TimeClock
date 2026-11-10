@@ -10,6 +10,18 @@ Read this before changing anything. It describes the app as it is on this branch
 
 A time clock for a small team (about 9 people: 3 admins, 6 employees). It must stay **very easy to use** and **fully bilingual (English / Spanish)**.
 
+**Sections.** The app is split into sections chosen from a side menu (left column on wide screens; a **Menu** button that opens a drawer on phones). The section is kept in the address (`#clock`, `#timeoff`, `#calendar`, `#daysoff`, `#team`, `#invite`, `#reports`), so a refresh or a bookmark opens it.
+
+| Group | Section | What is there |
+|---|---|---|
+| You | Clock | The clock button, hours today / this week / this pay period, PTO days left, recent shifts, the next-day-off notice |
+| You | Time off | Request a day off, my requests |
+| Everyone | Calendar | Month calendar of closures and approved time off; "Request this day" opens Time off with the day filled in |
+| Everyone | Company days off | **Every day the shop is closed, in date order**, with past ones folded away; admins add or remove days here and switch federal holidays on or off (with arrows to move between years) |
+| Admin | Team | Each person: hours, PTO, shifts, role |
+| Admin | Invite people | Invitations and who has not joined yet |
+| Admin | Reports | Pay-period hours, PTO, missed punches, downloads |
+
 **Everyone**
 - Signs in with email and password (or Google / X); "Forgot your password?" emails a reset link
 - One big **Clock in / Clock out** button
@@ -117,6 +129,7 @@ The rules live in **`src/lib/clock-machine.ts`**. The server functions use them 
 | **Role** | `employee` ⇄ `admin`, never zero admins, first profile is admin | `canSetRole()` in `setRole`; `ensureProfile()` |
 | **Invitation** | `open` → `accepted`; `open` → `expired` after 14 days → `open` again on "Send again"; remove = delete | `inviteState()` used by `acceptInvite`, `signInInfo` and the Team tab |
 | **Federal holiday** | `open` ⇄ `off` (admin switch). Off is an ordinary `holidays` row, so the banner, calendar and delete all treat it like any closure | `addHoliday` / `deleteHoliday` |
+| **Section** | one of `VIEWS`; admin-only ones (`team`, `invite`, `reports`) fall back to `clock` for employees, including when typed into the address | `viewFor()`; `go()` in `clock-app.tsx` |
 | **Sign-in form** | `in` ⇄ `up`; `in` → `forgot` → `sent`; an invitation link opens on `up` with the email locked | `Mode` in `auth-screen.tsx` |
 | **Session** | `pending` → `signed_in` / `signed_out` | `src/lib/auth/sign-in-gate.ts`, `src/routes/index.tsx` |
 | **Saving** | idle ⇄ saving, one save at a time | `act()` in `clock-app.tsx` |
@@ -151,11 +164,11 @@ The root element of the signed-in app carries the live state. Wait on these inst
 |---|---|
 | `data-status` | `booting`, `failed`, `ready`, `stale` |
 | `data-busy` | `true`, `false` |
-| `data-tab` | `mine`, `team`, `reports` |
+| `data-view` | `clock`, `timeoff`, `calendar`, `daysoff`, `team`, `invite`, `reports` (replaces the old `data-tab`) |
 | `data-role` | `admin`, `employee` |
 | `data-shift` | `in`, `out` |
 
-Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|manual"`), `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
+Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Menu links carry `data-nav="<section>"` (in `aside` on wide screens, in `#menu-drawer` after clicking `#menu-btn` on phones). Company days off: `#days-off` (rows carry `data-day-off="YYYY-MM-DD"`), `#add-day-off`, `#day-off-date`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|manual"`), `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
 
 ---
 
@@ -212,9 +225,9 @@ node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib
 
 ## 9. Test status
 
-- App unit tests: 76 of 76 pass (state machines, federal holiday dates, pay periods and the report, including daylight-saving weeks and three time zones).
-- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-09:
-  - Pay periods, PTO days and reports: 21 of 21. Covered: the current period (Nov 9 – Nov 22, 2026) on My time, PTO requested by the day, the same day twice refused, days per year set by an admin, approval, days left, the report row (8.50 worked + 2 PTO days = 24.50 to pay), the missed-punch list, both downloads and their contents, moving between periods, Spanish, and phone width.
-  - Invitations, federal holidays, sign-in and password reset: 32 of 32.
-  - Clock in/out, time off, lost connection and sign-in errors: 26 of 26.
+- App unit tests: 77 of 77 pass (state machines including sections, federal holiday dates, pay periods and the report).
+- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-09: 88 of 88.
+  - Sections and menu: phone drawer (open, choose, Escape), wide-screen side menu, an employee sees only their 4 sections and is sent to Clock from `#reports`, a refresh stays on the same section.
+  - Company days off: federal switch adds the day to the list, a custom day is listed in date order, the clock notice, the employee view (no remove or add), removing a day, the next year's federal list.
+  - Pay periods, PTO days and reports; invitations, sign-in and password reset; clock in/out, time off, lost connection and sign-in errors.
 - Not tested: real email delivery, a deployed build on Neon, Google / X sign-in.
