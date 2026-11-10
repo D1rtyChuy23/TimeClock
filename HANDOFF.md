@@ -70,14 +70,14 @@ The first account ever created becomes the admin.
 
 ### Colors
 
-The palette is built on the brand green **`#90a955`** and lives as tokens at the top of `src/styles.css` (light and dark). Use the tokens, never raw hex values in components.
+The palette is [navy, red, orange, gold, cream](https://coolors.co/palette/003049-d62828-f77f00-fcbf49-eae2b7) and lives as tokens at the top of `src/styles.css` (light and dark). Use the tokens, never raw hex values in components.
 
 | Token | Use |
 |---|---|
-| `leaf` (`#90a955`) | The brand color: the Clock in button, "you / on" accents, the header rule. Put `leaf-ink` (dark) text on it, never white: white on this green is too faint to read. |
-| `leaf-text` | A darker leaf for small text on paper and cards |
-| `pine` | Dark green for primary buttons, selected tabs and the Clock out button; `foam` text goes on it |
-| `paper`, `paper-2`, `card`, `line`, `ink`, `muted` | Backgrounds, borders and text |
+| `leaf` (`#f77f00`) | The brand accent: the Clock in button, "you" marks, the header rule. Put `leaf-ink` (`#003049`) text on it, never white. |
+| `leaf-text` (`#d62828`) | Red for small emphasis on paper, such as "on the clock" |
+| `pine` (`#003049`) | Navy for primary buttons, selected tabs and the Clock out button; `foam` (`#eae2b7`) text goes on it |
+| `paper` (`#eae2b7`), `paper-2` (`#fcbf49`), `card`, `line`, `ink`, `muted` | Cream and gold surfaces, borders, and navy text |
 
 ### Platform scaffold (leave alone unless you know why)
 

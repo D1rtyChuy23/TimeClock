@@ -1,40 +1,42 @@
 @import "tailwindcss";
 
 /*
- * Palette built on the brand green #90a955 ("leaf").
- * leaf      the brand color: the Clock in button and "you / on" accents. Dark text goes on it, never white.
- * leaf-text a darker leaf that is readable as small text on paper and cards.
- * pine      the dark green for primary buttons, selected tabs and the Clock out button; foam text goes on it.
+ * Palette: https://coolors.co/palette/003049-d62828-f77f00-fcbf49-eae2b7
+ *   #003049 navy    ink, and the dark buttons (Clock out, selected tabs)
+ *   #d62828 red     small emphasis, such as "on the clock"
+ *   #f77f00 orange  the brand accent: Clock in, the header rule. Navy text on it, never white.
+ *   #fcbf49 gold    selected surfaces and lines
+ *   #eae2b7 cream   paper, cards, and text on navy
  */
 :root {
   color-scheme: light;
-  --paper: #f3f6ec;
-  --paper-2: #e6ecd9;
-  --ink: #1b2410;
-  --muted: #5c6a4c;
-  --line: #d6dfc6;
-  --card: #fdfef9;
-  --pine: #2e3d18;
-  --foam: #f7faef;
-  --leaf: #90a955;
-  --leaf-ink: #18200d;
-  --leaf-text: #4f6826;
+  --paper: #eae2b7;
+  --paper-2: #fcbf49;
+  --ink: #003049;
+  --muted: color-mix(in srgb, #003049 68%, #eae2b7);
+  --line: color-mix(in srgb, #003049 22%, #fcbf49);
+  --card: color-mix(in srgb, #eae2b7 78%, white);
+  --pine: #003049;
+  --foam: #eae2b7;
+  --leaf: #f77f00;
+  --leaf-ink: #003049;
+  --leaf-text: #d62828;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --paper: #10140b;
-    --paper-2: #1a2012;
-    --ink: #eef3e3;
-    --muted: #a7b396;
-    --line: #2b3420;
-    --card: #161b0f;
-    --pine: #dce7c4;
-    --foam: #18200d;
-    --leaf: #90a955;
-    --leaf-ink: #10160a;
-    --leaf-text: #a9c26d;
+    --paper: #003049;
+    --paper-2: color-mix(in srgb, #003049 72%, #000);
+    --ink: #eae2b7;
+    --muted: color-mix(in srgb, #eae2b7 68%, #003049);
+    --line: color-mix(in srgb, #fcbf49 40%, #003049);
+    --card: color-mix(in srgb, #003049 78%, #eae2b7);
+    --pine: #fcbf49;
+    --foam: #003049;
+    --leaf: #f77f00;
+    --leaf-ink: #003049;
+    --leaf-text: #fcbf49;
   }
 }
 
