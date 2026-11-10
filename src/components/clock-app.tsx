@@ -1,9 +1,34 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
-import { CalendarOff, ChevronLeft, ChevronRight, PenLine } from "lucide-react";
+import {
+  CalendarDays,
+  CalendarOff,
+  ChartColumn,
+  ChevronLeft,
+  ChevronRight,
+  Clock as ClockIcon,
+  Menu,
+  PenLine,
+  TreePalm,
+  UserPlus,
+  Users,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { INVITE_KEY } from "@/components/auth-screen";
 import { UserButton } from "@/lib/auth/gates";
-import { PTO_NEXT, canPto, inviteState, nextLoad, ptoActions, shiftAction, type LoadStatus } from "@/lib/clock-machine";
+import {
+  ADMIN_VIEWS,
+  PTO_NEXT,
+  canPto,
+  inviteState,
+  nextLoad,
+  ptoActions,
+  shiftAction,
+  viewFor,
+  type LoadStatus,
+  type View,
+} from "@/lib/clock-machine";
 import { federalHolidays, federalOn } from "@/lib/federal-holidays";
 import { english, errorCopyKey, useI18n, type CopyKey, type Lang } from "@/lib/i18n";
 import {
@@ -125,7 +150,11 @@ function screenReducer(screen: Screen, event: ScreenEvent): Screen {
 export function ClockApp() {
   const { t, lang, setLang } = useI18n();
   const [{ status, snap }, send] = useReducer(screenReducer, { status: "booting", snap: null });
-  const [tab, setTab] = useState<"mine" | "team" | "reports">("mine");
+  const [view, setView] = useState<View>("clock");
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Shared by Calendar and Time off: picking a day on the calendar fills in the request form.
+  const [ptoDay, setPtoDay] = useState(() => dateInput(new Date()));
+  const [focusDay, setFocusDay] = useState(() => dateInput(new Date()));
   const [busy, setBusy] = useState(false);
   // Refs, because two taps can land before React re-renders with `busy` set.
   const saving = useRef(false);
@@ -209,6 +238,31 @@ export function ClockApp() {
   }, [status]);
 
   const onClock = snap ? snap.punches.some((p) => p.userId === snap.me.userId && !p.clockOut) : false;
+  const admin = snap?.me.role === "admin";
+
+  // Section machine (clock-machine.ts). The address keeps it as #reports etc.
+  // Re-checked whenever the role is known or changes, so a demoted admin lands on the clock.
+  useEffect(() => {
+    if (!snap) return;
+    setView((current) => viewFor(window.location.hash.slice(1) || current, admin));
+    // Only the role matters here, not every new snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admin, snap === null]);
+  useEffect(() => {
+    const onHash = () => setView(viewFor(window.location.hash.slice(1), admin));
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [admin]);
+  const go = (next: View) => {
+    const to = viewFor(next, admin);
+    setView(to);
+    setMenuOpen(false);
+    window.history.replaceState(null, "", `#${to}`);
+    window.scrollTo({ top: 0 });
+  };
+  const badges: Partial<Record<View, number>> = snap
+    ? { team: snap.pto.filter((p) => p.status === "pending").length, invite: (snap.invites ?? []).length }
+    : {};
 
   return (
     <div
@@ -216,16 +270,36 @@ export function ClockApp() {
       // Live state for tests and agents: wait on these instead of sleeping.
       data-status={status}
       data-busy={busy}
-      data-tab={snap?.me.role === "admin" ? tab : "mine"}
+      data-view={view}
       data-role={snap?.me.role}
       data-shift={snap ? (onClock ? "in" : "out") : undefined}
     >
       <header className="sticky top-0 z-20 border-b-4 border-leaf bg-paper">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
-          <p className="font-display text-2xl font-bold uppercase leading-none tracking-wide whitespace-nowrap sm:text-3xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
+          {snap ? (
+            <button
+              type="button"
+              id="menu-btn"
+              aria-expanded={menuOpen}
+              aria-controls="menu-drawer"
+              onClick={() => setMenuOpen(true)}
+              className="flex h-11 min-w-0 items-center gap-2 rounded-lg border border-line bg-card px-3 text-sm font-semibold md:hidden"
+            >
+              <Menu className="size-5 shrink-0" aria-hidden="true" />
+              <span className="sr-only">{t("menu")}: </span>
+              <span className="truncate">{t(NAV_LABEL[view])}</span>
+            </button>
+          ) : null}
+          <p
+            className={
+              "flex items-center gap-2 font-display text-2xl font-bold uppercase leading-none tracking-wide whitespace-nowrap sm:text-3xl " +
+              (snap ? "hidden md:flex" : "")
+            }
+          >
+            <BrandMark />
             {t("appName")}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <div role="group" aria-label={t("language")} className="flex overflow-hidden rounded-lg border border-line">
               {(["en", "es"] as const).map((code) => (
                 <button
@@ -249,84 +323,215 @@ export function ClockApp() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl px-4 pt-4">
-        {status === "booting" ? <p className="text-muted">{t("boot")}</p> : null}
-        {status === "failed" ? (
-          <div className="rounded-2xl border border-line bg-card p-4" role="alert">
-            <p>{t("loadError")}</p>
-            <button type="button" className={"mt-3 " + solid} onClick={() => void reload()}>
-              {t("retry")}
-            </button>
-          </div>
-        ) : null}
-        {status === "stale" ? (
-          <div
-            className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3 py-2"
-            role="status"
-          >
-            <p className="text-sm font-medium">{t("staleNotice")}</p>
-            <button type="button" className={ghost} onClick={() => void reload()}>
-              {t("retry")}
-            </button>
-          </div>
-        ) : null}
+      {snap && menuOpen ? (
+        <MenuDrawer onClose={() => setMenuOpen(false)}>
+          <SectionNav view={view} admin={admin} badges={badges} onGo={go} />
+        </MenuDrawer>
+      ) : null}
+
+      <div className="mx-auto flex w-full max-w-6xl gap-6 px-4">
         {snap ? (
-          <>
-            {snap.me.role === "admin" ? (
-              <div className="mb-4 grid grid-cols-3 gap-2">
-                <TabButton active={tab === "mine"} onClick={() => setTab("mine")}>
-                  {t("mine")}
-                </TabButton>
-                <TabButton active={tab === "team"} onClick={() => setTab("team")}>
-                  {t("team")}
-                  <PendingBadge n={snap.pto.filter((p) => p.status === "pending").length} />
-                </TabButton>
-                <TabButton active={tab === "reports"} onClick={() => setTab("reports")}>
-                  {t("reports")}
-                </TabButton>
-              </div>
-            ) : null}
-            {tab === "team" && snap.me.role === "admin" ? (
+          <aside className="sticky top-[76px] hidden w-60 shrink-0 self-start pt-4 md:block" aria-label={t("sections")}>
+            <SectionNav view={view} admin={admin} badges={badges} onGo={go} />
+          </aside>
+        ) : null}
+        <main className="w-full min-w-0 max-w-3xl flex-1 pt-4">
+          {status === "booting" ? <p className="text-muted">{t("boot")}</p> : null}
+          {status === "failed" ? (
+            <div className="rounded-2xl border border-line bg-card p-4" role="alert">
+              <p>{t("loadError")}</p>
+              <button type="button" className={"mt-3 " + solid} onClick={() => void reload()}>
+                {t("retry")}
+              </button>
+            </div>
+          ) : null}
+          {status === "stale" ? (
+            <div
+              className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3 py-2"
+              role="status"
+            >
+              <p className="text-sm font-medium">{t("staleNotice")}</p>
+              <button type="button" className={ghost} onClick={() => void reload()}>
+                {t("retry")}
+              </button>
+            </div>
+          ) : null}
+          {snap ? (
+            view === "timeoff" ? (
+              <PtoPanel snap={snap} now={now} busy={busy} act={act} day={ptoDay} setDay={setPtoDay} />
+            ) : view === "calendar" ? (
+              <TeamCalendar
+                snap={snap}
+                now={now}
+                busy={busy}
+                act={act}
+                focusDay={focusDay}
+                onPick={(day) => {
+                  setFocusDay(day);
+                  setPtoDay(day);
+                }}
+                onRequest={(day) => {
+                  setPtoDay(day);
+                  go("timeoff");
+                }}
+              />
+            ) : view === "daysoff" ? (
+              <DaysOffPanel snap={snap} now={now} busy={busy} act={act} />
+            ) : view === "team" && admin ? (
               <TeamPanel snap={snap} now={now} busy={busy} act={act} />
-            ) : tab === "reports" && snap.me.role === "admin" ? (
+            ) : view === "invite" && admin ? (
+              <InvitePanel snap={snap} now={now} busy={busy} act={act} />
+            ) : view === "reports" && admin ? (
               <ReportsPanel now={now} />
             ) : (
               <Mine snap={snap} now={now} busy={busy} act={act} />
-            )}
-          </>
-        ) : null}
-      </main>
+            )
+          ) : null}
+        </main>
+      </div>
     </div>
   );
 }
 
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
+const NAV_LABEL: Record<View, CopyKey> = {
+  clock: "navClock",
+  timeoff: "navTimeOff",
+  calendar: "navCalendar",
+  daysoff: "navDaysOff",
+  team: "navTeam",
+  invite: "navInvite",
+  reports: "navReports",
+};
+const NAV_ICON: Record<View, LucideIcon> = {
+  clock: ClockIcon,
+  timeoff: TreePalm,
+  calendar: CalendarDays,
+  daysoff: CalendarOff,
+  team: Users,
+  invite: UserPlus,
+  reports: ChartColumn,
+};
+const NAV_GROUPS: Array<{ label: CopyKey; views: View[] }> = [
+  { label: "groupYou", views: ["clock", "timeoff"] },
+  { label: "groupEveryone", views: ["calendar", "daysoff"] },
+  { label: "groupAdmin", views: ["team", "invite", "reports"] },
+];
+
+function BrandMark() {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        "flex h-12 items-center justify-center gap-2 rounded-xl text-sm font-semibold " +
-        (active ? "bg-pine text-foam" : "border border-line bg-card text-ink")
-      }
-    >
-      {children}
-    </button>
+    <svg viewBox="0 0 32 32" className="size-8 shrink-0" aria-hidden="true">
+      <rect width="32" height="32" rx="8" className="fill-leaf" />
+      <circle cx="16" cy="16" r="8" fill="none" strokeWidth="2" className="stroke-leaf-ink" />
+      <path d="M16 11.5V16l3 2" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="stroke-leaf-ink" />
+    </svg>
   );
 }
 
-function PendingBadge({ n }: { n: number }) {
-  if (n <= 0) return null;
+/** The side menu. The same list sits in the left column on wide screens and in the drawer on phones. */
+function SectionNav({
+  view,
+  admin,
+  badges,
+  onGo,
+}: {
+  view: View;
+  admin: boolean;
+  badges: Partial<Record<View, number>>;
+  onGo: (view: View) => void;
+}) {
+  const { t } = useI18n();
   return (
-    <span className="rounded-full bg-leaf px-2 text-xs font-bold tabular-nums text-leaf-ink">{n}</span>
+    <nav aria-label={t("sections")} className="space-y-5">
+      {NAV_GROUPS.filter((g) => admin || !g.views.some((v) => ADMIN_VIEWS.has(v))).map((group) => (
+        <div key={group.label}>
+          <p className="px-3 pb-1 text-xs font-medium text-muted">{t(group.label)}</p>
+          <ul className="space-y-1">
+            {group.views.map((v) => {
+              const Icon = NAV_ICON[v];
+              const here = v === view;
+              const n = badges[v] ?? 0;
+              return (
+                <li key={v}>
+                  <a
+                    href={`#${v}`}
+                    data-nav={v}
+                    aria-current={here ? "page" : undefined}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onGo(v);
+                    }}
+                    className={
+                      "flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-semibold " +
+                      (here ? "bg-leaf text-leaf-ink" : "text-ink hover:bg-paper-2")
+                    }
+                  >
+                    <Icon className="size-5 shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">{t(NAV_LABEL[v])}</span>
+                    {n > 0 ? (
+                      <span
+                        className={
+                          "rounded-full px-2 text-xs font-bold tabular-nums " +
+                          (here ? "bg-leaf-ink text-leaf" : "bg-pine text-foam")
+                        }
+                      >
+                        {n}
+                      </span>
+                    ) : null}
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+/** Slide-in panel for the menu on phones. Closes on a choice, the close button, the backdrop or Escape. */
+function MenuDrawer({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const { t } = useI18n();
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    panel.current?.querySelector<HTMLElement>("[aria-current=page], a")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = overflow;
+      opener?.focus();
+    };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true" aria-label={t("sections")} id="menu-drawer">
+      <button type="button" tabIndex={-1} aria-hidden="true" className="absolute inset-0 bg-ink/40" onClick={onClose} />
+      <div
+        ref={panel}
+        className="absolute inset-y-0 left-0 w-72 max-w-[85%] overflow-y-auto border-r-4 border-leaf bg-paper px-3 pb-6 shadow-xl"
+        style={{ paddingTop: "max(12px, env(safe-area-inset-top, 0px))" }}
+      >
+        <div className="mb-4 flex items-center justify-between gap-2 px-1">
+          <p className="flex items-center gap-2 font-display text-2xl font-bold uppercase leading-none tracking-wide">
+            <BrandMark />
+            {t("appName")}
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("closeMenu")}
+            className="grid size-11 place-items-center rounded-lg border border-line bg-card"
+          >
+            <X className="size-5" aria-hidden="true" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -357,8 +562,6 @@ function Mine({
     .reduce((sum, p) => sum + p.hours, 0);
   const periodH = hoursIn(mine, period.start, period.end, now) + periodPto;
   const recent = mine.slice(0, 10);
-  const [ptoDay, setPtoDay] = useState(() => dateInput(now));
-  const [focusDay, setFocusDay] = useState(() => dateInput(now));
 
   return (
     <div className="space-y-4">
@@ -409,19 +612,6 @@ function Mine({
         {t("ptoLeft")}: {Math.round(daysLeft * 10) / 10}
       </p>
       <p className="text-sm text-muted">{t("ptoHint")}</p>
-
-      <TeamCalendar
-        snap={snap}
-        now={now}
-        busy={busy}
-        act={act}
-        focusDay={focusDay}
-        onPick={(day) => {
-          setFocusDay(day);
-          setPtoDay(day);
-        }}
-      />
-      <PtoPanel snap={snap} now={now} busy={busy} act={act} day={ptoDay} setDay={setPtoDay} />
 
       <section className="rounded-2xl border border-line bg-card p-4">
         <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("shifts")}</h2>
@@ -636,6 +826,7 @@ function TeamCalendar({
   act,
   focusDay,
   onPick,
+  onRequest,
 }: {
   snap: Snapshot;
   now: Date;
@@ -643,10 +834,11 @@ function TeamCalendar({
   act: Act;
   focusDay: string;
   onPick: (day: string) => void;
+  /** "Request this day": opens Time off with the day filled in. */
+  onRequest: (day: string) => void;
 }) {
   const { t, lang } = useI18n();
   const [cursor, setCursor] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1));
-  const [holidayName, setHolidayName] = useState("");
   const [confirmHoliday, setConfirmHoliday] = useState<string | null>(null);
   const [confirmPto, setConfirmPto] = useState<number | null>(null);
   const year = cursor.getFullYear();
@@ -837,20 +1029,140 @@ function TeamCalendar({
         <button
           type="button"
           className={solid + " mt-3 w-full"}
-          onClick={() => {
-            onPick(focusDay);
-            document.getElementById("pto-request")?.scrollIntoView({ block: "start" });
-          }}
+          onClick={() => onRequest(focusDay)}
         >
           {t("requestThisDay")}
         </button>
       </div>
 
-      <div className="mt-4 border-t border-line pt-4" id="federal-holidays">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">{t("federalTitle", { year })}</h3>
+    </section>
+  );
+}
+
+/** Every day the shop is closed, in one list, plus the federal holiday switches and the form to add a day. */
+function DaysOffPanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; busy: boolean; act: Act }) {
+  const { t, lang } = useI18n();
+  const nameOf = useHolidayName();
+  const admin = snap.me.role === "admin";
+  const today = dateInput(now);
+  const upcoming = snap.holidays.filter((h) => h.day >= today);
+  const past = snap.holidays.filter((h) => h.day < today).reverse();
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const [year, setYear] = useState(now.getFullYear());
+  const [day, setDay] = useState(today);
+  const [name, setName] = useState("");
+  const isClosed = (d: string) => snap.holidays.some((h) => h.day === d);
+  const longDay = (d: string) =>
+    new Date(d + "T12:00:00").toLocaleDateString(locale(lang), {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+  const when = (d: string) => {
+    const n = daysUntil(d, now);
+    return n === 0 ? t("whenToday") : n === 1 ? t("whenTomorrow") : t("whenInDays", { n });
+  };
+
+  const row = (h: Holiday, upcomingRow: boolean) => (
+    <li key={h.day} className="flex flex-wrap items-center justify-between gap-3 py-3" data-day-off={h.day}>
+      <div className="min-w-0">
+        <p className="font-medium">{nameOf(h)}</p>
+        <p className="text-sm text-muted">
+          {longDay(h.day)}
+          {upcomingRow ? ` · ${when(h.day)}` : ""}
+        </p>
+      </div>
+      {admin ? (
+        confirm === h.day ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className={solid}
+              disabled={busy}
+              onClick={() => void act(() => deleteHoliday({ data: { day: h.day } }), "removed").then(() => setConfirm(null))}
+            >
+              {t("delete")}
+            </button>
+            <button type="button" className={ghost} onClick={() => setConfirm(null)}>
+              {t("keep")}
+            </button>
+          </div>
+        ) : (
+          <button type="button" className={ghost} disabled={busy} onClick={() => setConfirm(h.day)}>
+            {t("remove")}
+          </button>
+        )
+      ) : null}
+    </li>
+  );
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-2xl border border-line bg-card p-4" id="days-off">
+        <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("daysOffTitle")}</h2>
+        <p className="mt-1 text-sm text-pretty text-muted">{admin ? t("daysOffLeadAdmin") : t("daysOffLead")}</p>
+        {upcoming.length === 0 ? <p className="mt-3 text-sm text-muted">{t("daysOffNone")}</p> : null}
+        <ul className="mt-2 divide-y divide-line">{upcoming.map((h) => row(h, true))}</ul>
+        {past.length > 0 ? (
+          <details className="mt-3 border-t border-line pt-3">
+            <summary className="cursor-pointer text-sm font-medium text-muted">{t("pastDaysOff", { n: past.length })}</summary>
+            <ul className="mt-1 divide-y divide-line">{past.map((h) => row(h, false))}</ul>
+          </details>
+        ) : null}
+      </section>
+
+      {admin ? (
+        <form
+          id="add-day-off"
+          className="space-y-3 rounded-2xl border border-line bg-card p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act(() => addHoliday({ data: { day, name } }), "saved").then((ok) => {
+              if (ok) setName("");
+            });
+          }}
+        >
+          <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("addDayOffTitle")}</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm font-medium">
+              {t("dayOffDate")}
+              <input id="day-off-date" type="date" required value={day} onChange={(e) => setDay(e.target.value)} className={field} />
+            </label>
+            <label className="block text-sm font-medium">
+              {t("holidayName")}
+              <input
+                id="holiday-name"
+                required
+                maxLength={60}
+                value={name}
+                placeholder={t("holidayPh")}
+                onChange={(e) => setName(e.target.value)}
+                className={field}
+              />
+            </label>
+          </div>
+          <button type="submit" disabled={busy} className={solid}>
+            {t("save")}
+          </button>
+        </form>
+      ) : null}
+
+      <section className="rounded-2xl border border-line bg-card p-4" id="federal-holidays">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("federalTitle", { year })}</h2>
+          <div className="flex shrink-0 gap-2">
+            <button type="button" aria-label={t("prevYear")} className={ghost + " w-11 px-0"} onClick={() => setYear((y) => y - 1)}>
+              <ChevronLeft className="size-5" aria-hidden="true" />
+            </button>
+            <button type="button" aria-label={t("nextYear")} className={ghost + " w-11 px-0"} onClick={() => setYear((y) => y + 1)}>
+              <ChevronRight className="size-5" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
         <p className="mt-1 text-sm text-muted">{admin ? t("federalLeadAdmin") : t("federalLead")}</p>
         <ul className="mt-2 divide-y divide-line">
-          {federal.map((f) => {
+          {federalHolidays(year).map((f) => {
             const closed = isClosed(f.day);
             const label = closed ? t("weAreOff") : t("weAreOpen");
             return (
@@ -892,38 +1204,8 @@ function TeamCalendar({
             );
           })}
         </ul>
-      </div>
-
-      {admin ? (
-        <form
-          className="mt-4 space-y-3 border-t border-line pt-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(() => addHoliday({ data: { day: focusDay, name: holidayName } }), "saved").then((ok) => {
-              if (ok) setHolidayName("");
-            });
-          }}
-        >
-          <p className="text-sm font-medium">{t("addHoliday")}</p>
-          <p className="text-sm text-muted">{fmtDay(focusDay, lang)}</p>
-          <label className="block text-sm font-medium">
-            {t("holidayName")}
-            <input
-              id="holiday-name"
-              required
-              maxLength={60}
-              value={holidayName}
-              placeholder={t("holidayPh")}
-              onChange={(e) => setHolidayName(e.target.value)}
-              className={field}
-            />
-          </label>
-          <button type="submit" disabled={busy} className={solid}>
-            {t("save")}
-          </button>
-        </form>
-      ) : null}
-    </section>
+      </section>
+    </div>
   );
 }
 
@@ -1011,7 +1293,6 @@ function TeamPanel({
         {" · "}
         {t("pendingCount", { n: pending })}
       </p>
-      <InvitePanel snap={snap} now={now} busy={busy} act={act} />
       {people.length <= 1 ? <p className="text-sm text-muted">{t("emptyTeam")}</p> : null}
       {people.map((person) => (
         <PersonCard key={person.userId} person={person} snap={snap} now={now} busy={busy} act={act} />

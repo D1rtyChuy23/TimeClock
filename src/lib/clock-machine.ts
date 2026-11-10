@@ -110,3 +110,18 @@ export function inviteState(invite: { acceptedAt: string | null; expiresAt: stri
   if (invite.acceptedAt) return "accepted";
   return new Date(invite.expiresAt).getTime() > now.getTime() ? "open" : "expired";
 }
+
+// ---------------------------------------------------------------------------
+// 6. Section (the side menu). One section shows at a time; admin-only sections
+//    fall back to the clock for everyone else. The section is kept in the
+//    address as `#reports` and so on, so a refresh or a bookmark opens it.
+// ---------------------------------------------------------------------------
+export const VIEWS = ["clock", "timeoff", "calendar", "daysoff", "team", "invite", "reports"] as const;
+export type View = (typeof VIEWS)[number];
+export const ADMIN_VIEWS: ReadonlySet<View> = new Set<View>(["team", "invite", "reports"]);
+
+/** The section to show for a requested one (from the menu or the address). */
+export function viewFor(requested: string, admin: boolean): View {
+  const view = (VIEWS as readonly string[]).includes(requested) ? (requested as View) : "clock";
+  return ADMIN_VIEWS.has(view) && !admin ? "clock" : view;
+}
