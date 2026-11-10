@@ -10,6 +10,7 @@ import {
   type PtoStatus,
 } from "@/lib/clock-machine";
 import type { Sql } from "@/lib/db";
+import { PTO_DAY_HOURS } from "@/lib/pay-period";
 
 export type Role = "admin" | "employee";
 
@@ -386,7 +387,6 @@ export const requestPto = createServerFn({ method: "POST" })
     const o = asRecord(raw);
     return {
       day: typeof o.day === "string" ? o.day : "",
-      hours: num(o.hours),
       note: typeof o.note === "string" ? o.note : "",
     };
   })
@@ -394,13 +394,17 @@ export const requestPto = createServerFn({ method: "POST" })
     return run(context.userId, async (sql) => {
       await ensureProfile(sql, context.userId);
       if (!isDay(data.day)) throw new Error("bad_day");
-      if (!Number.isFinite(data.hours) || data.hours <= 0 || data.hours > 24) throw new Error("bad_hours");
       const note = data.note.trim().slice(0, 200);
       if (data.note.trim().length > 200) throw new Error("bad_note");
-      const hours = Math.round(data.hours * 100) / 100;
+      // PTO is taken in whole days, each paid as PTO_DAY_HOURS. One request per day.
+      const taken = await sql`
+        select id from pto_requests
+        where user_id = ${context.userId} and day = ${data.day} and status <> 'denied'
+      `;
+      if (taken.length > 0) throw new Error("duplicate");
       await sql`
         insert into pto_requests (user_id, day, hours, note, status)
-        values (${context.userId}, ${data.day}, ${hours}, ${note || null}, 'pending')
+        values (${context.userId}, ${data.day}, ${PTO_DAY_HOURS}, ${note || null}, 'pending')
       `;
     });
   });
@@ -463,12 +467,15 @@ export const setAllowance = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((raw: unknown) => {
     const o = asRecord(raw);
-    return { userId: typeof o.userId === "string" ? o.userId : "", hours: num(o.hours) };
+    // `days` is what the screen sends. `hours` is still read so a page loaded before this change keeps working.
+    const hours = o.days !== undefined ? num(o.days) * PTO_DAY_HOURS : num(o.hours);
+    return { userId: typeof o.userId === "string" ? o.userId : "", hours };
   })
   .handler(async ({ context, data }): Promise<ClockResult> => {
     return run(context.userId, async (sql) => {
       await requireAdmin(sql, context.userId);
       if (!data.userId) throw new Error("not_found");
+      // profiles.pto_allowance is stored in hours (days x PTO_DAY_HOURS).
       if (!Number.isFinite(data.hours) || data.hours < 0 || data.hours > 999.99) throw new Error("bad_hours");
       const hours = Math.round(data.hours * 100) / 100;
       const rows = await sql`
@@ -684,4 +691,63 @@ export const signInInfo = createServerFn({ method: "GET" })
     if (!row) return { emailReady, invite: { email: "", open: false } };
     const state = inviteState({ acceptedAt: iso(row.accepted_at), expiresAt: iso(row.expires_at) ?? "" }, new Date());
     return { emailReady, invite: { email: state === "open" ? String(row.email) : "", open: state === "open" } };
+  });
+
+// ---------------------------------------------------------------------------
+// Payroll report (admins). The screen picks the pay period and does the math
+// in `pay-period.ts`, in the shop's local time; this only fetches the rows.
+// ---------------------------------------------------------------------------
+
+export type ReportData = {
+  people: Profile[];
+  /** Every shift overlapping [from, to), plus any still open. */
+  punches: Punch[];
+  /** Approved time off from `yearStart` through `lastDay`. */
+  pto: Array<{ userId: string; day: string; hours: number }>;
+};
+export type ReportResult = { ok: true; data: ReportData } | { ok: false; error: string };
+
+export const loadReport = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    const text = (v: unknown) => (typeof v === "string" ? v : "");
+    return { from: text(o.from), to: text(o.to), yearStart: text(o.yearStart), lastDay: text(o.lastDay) };
+  })
+  .handler(async ({ context, data }): Promise<ReportResult> => {
+    try {
+      const sql = await sqlClient();
+      await requireAdmin(sql, context.userId);
+      const from = Date.parse(data.from);
+      const to = Date.parse(data.to);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 40 * 86_400_000) {
+        throw new Error("bad_range");
+      }
+      if (!isDay(data.yearStart) || !isDay(data.lastDay)) throw new Error("bad_day");
+      const people = await sql<Record<string, unknown>>`
+        select user_id, full_name, email, role, pto_allowance, created_at
+        from profiles order by lower(full_name), email
+      `;
+      const punches = await sql<Record<string, unknown>>`
+        select id, user_id, clock_in, clock_out, manual, created_by from punches
+        where clock_in < ${data.to} and (clock_out is null or clock_out > ${data.from})
+        order by clock_in
+      `;
+      const pto = await sql<Record<string, unknown>>`
+        select user_id, day, hours from pto_requests
+        where status = 'approved' and day >= ${data.yearStart} and day <= ${data.lastDay}
+      `;
+      return {
+        ok: true,
+        data: {
+          people: people.map(mapProfile),
+          punches: punches.map(mapPunch),
+          pto: pto.map((r) => ({ userId: String(r.user_id), day: dayStr(r.day), hours: num(r.hours) })),
+        },
+      };
+    } catch (e) {
+      const code = knownError(e);
+      if (!code) console.error(e);
+      return { ok: false, error: code ?? "error" };
+    }
   });

@@ -6,6 +6,16 @@ import { UserButton } from "@/lib/auth/gates";
 import { PTO_NEXT, canPto, inviteState, nextLoad, ptoActions, shiftAction, type LoadStatus } from "@/lib/clock-machine";
 import { federalHolidays, federalOn } from "@/lib/federal-holidays";
 import { english, errorCopyKey, useI18n, type CopyKey, type Lang } from "@/lib/i18n";
+import {
+  PTO_DAY_HOURS,
+  buildPayReport,
+  dayKey,
+  payPeriod,
+  payPeriodIndex,
+  payPeriodOf,
+  toCsv,
+  type PayReport,
+} from "@/lib/pay-period";
 import { addDays, daysUntil, fmtHms, fmtHours, hoursIn, ptoUsed, selfCheck, weekStart } from "@/lib/time";
 import {
   acceptInvite,
@@ -14,6 +24,7 @@ import {
   cancelPto,
   createInvite,
   decidePto,
+  loadReport,
   deleteHoliday,
   deletePunch,
   forceOut,
@@ -29,6 +40,7 @@ import {
   type OffDay,
   type Profile,
   type PtoRequest,
+  type ReportData,
   type Punch,
   type Snapshot,
 } from "@/lib/timeclock.functions";
@@ -76,6 +88,15 @@ function fmtDay(day: string, lang: Lang): string {
   });
 }
 
+/** "1 day", "2 days", "1.5 days". */
+function useFmtDays(): (n: number) => string {
+  const { t } = useI18n();
+  return (n) => {
+    const r = Math.round(n * 10) / 10;
+    return r === 1 ? t("dayOne") : t("daysN", { n: Number.isInteger(r) ? String(r) : r.toFixed(1) });
+  };
+}
+
 function dateInput(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -104,7 +125,7 @@ function screenReducer(screen: Screen, event: ScreenEvent): Screen {
 export function ClockApp() {
   const { t, lang, setLang } = useI18n();
   const [{ status, snap }, send] = useReducer(screenReducer, { status: "booting", snap: null });
-  const [tab, setTab] = useState<"mine" | "team">("mine");
+  const [tab, setTab] = useState<"mine" | "team" | "reports">("mine");
   const [busy, setBusy] = useState(false);
   // Refs, because two taps can land before React re-renders with `busy` set.
   const saving = useRef(false);
@@ -252,7 +273,7 @@ export function ClockApp() {
         {snap ? (
           <>
             {snap.me.role === "admin" ? (
-              <div className="mb-4 grid grid-cols-2 gap-2">
+              <div className="mb-4 grid grid-cols-3 gap-2">
                 <TabButton active={tab === "mine"} onClick={() => setTab("mine")}>
                   {t("mine")}
                 </TabButton>
@@ -260,10 +281,15 @@ export function ClockApp() {
                   {t("team")}
                   <PendingBadge n={snap.pto.filter((p) => p.status === "pending").length} />
                 </TabButton>
+                <TabButton active={tab === "reports"} onClick={() => setTab("reports")}>
+                  {t("reports")}
+                </TabButton>
               </div>
             ) : null}
             {tab === "team" && snap.me.role === "admin" ? (
               <TeamPanel snap={snap} now={now} busy={busy} act={act} />
+            ) : tab === "reports" && snap.me.role === "admin" ? (
+              <ReportsPanel now={now} />
             ) : (
               <Mine snap={snap} now={now} busy={busy} act={act} />
             )}
@@ -322,8 +348,14 @@ function Mine({
   const week0 = weekStart(now);
   const todayH = hoursIn(mine, today0, addDays(today0, 1), now);
   const weekH = hoursIn(mine, week0, addDays(week0, 7), now);
-  const used = ptoUsed(snap.pto.filter((p) => p.userId === snap.me.userId), now.getFullYear());
-  const left = snap.me.ptoAllowance - used;
+  const myPto = snap.pto.filter((p) => p.userId === snap.me.userId);
+  const used = ptoUsed(myPto, now.getFullYear());
+  const daysLeft = (snap.me.ptoAllowance - used) / PTO_DAY_HOURS;
+  const period = payPeriodOf(now);
+  const periodPto = myPto
+    .filter((p) => p.status === "approved" && p.day >= period.firstDay && p.day <= period.lastDay)
+    .reduce((sum, p) => sum + p.hours, 0);
+  const periodH = hoursIn(mine, period.start, period.end, now) + periodPto;
   const recent = mine.slice(0, 10);
   const [ptoDay, setPtoDay] = useState(() => dateInput(now));
   const [focusDay, setFocusDay] = useState(() => dateInput(now));
@@ -368,9 +400,14 @@ function Mine({
       <section className="grid grid-cols-3 gap-2">
         <Stat label={t("today")} value={fmtHours(todayH)} unit={t("hours")} />
         <Stat label={t("thisWeek")} value={fmtHours(weekH)} unit={t("hours")} />
-        <Stat label={t("ptoLeft")} value={fmtHours(left)} unit={t("hours")} />
+        <Stat label={t("payPeriod")} value={fmtHours(periodH)} unit={t("hours")} />
       </section>
-      <p className="text-sm text-muted">{t("weekNote")}</p>
+      <p className="text-sm text-muted" id="pay-period-note">
+        {t("weekNote", { from: fmtDay(period.firstDay, lang), to: fmtDay(period.lastDay, lang) })}
+      </p>
+      <p className="text-sm font-medium text-ink" id="pto-days-left">
+        {t("ptoLeft")}: {Math.round(daysLeft * 10) / 10}
+      </p>
       <p className="text-sm text-muted">{t("ptoHint")}</p>
 
       <TeamCalendar
@@ -490,8 +527,8 @@ function PtoPanel({
   setDay: (day: string) => void;
 }) {
   const { t, lang } = useI18n();
-  const [hours, setHours] = useState("8");
   const [note, setNote] = useState("");
+  const fmtDays = useFmtDays();
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const rows = snap.pto
     .filter((p) => p.userId === snap.me.userId)
@@ -506,31 +543,16 @@ function PtoPanel({
         className="mt-3 space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
-          void act(() => requestPto({ data: { day, hours: Number(hours), note } }), "sent").then((ok) => {
+          void act(() => requestPto({ data: { day, note } }), "sent").then((ok) => {
             if (ok) setNote("");
           });
         }}
       >
-        <div className="grid grid-cols-2 gap-2">
-          <label className="text-sm font-medium">
-            {t("day")}
-            <input id="pto-day" type="date" required value={day} onChange={(e) => setDay(e.target.value)} className={field} />
-          </label>
-          <label className="text-sm font-medium">
-            {t("ptoHours")}
-            <input
-              id="pto-hours"
-              type="number"
-              required
-              min={0.25}
-              max={24}
-              step={0.25}
-              value={hours}
-              onChange={(e) => setHours(e.target.value)}
-              className={field}
-            />
-          </label>
-        </div>
+        <label className="block text-sm font-medium">
+          {t("day")}
+          <input id="pto-day" type="date" required value={day} onChange={(e) => setDay(e.target.value)} className={field} />
+          <span className="mt-1 block text-xs font-normal text-muted">{t("ptoDayNote")}</span>
+        </label>
         <label className="block text-sm font-medium">
           {t("note")}
           <input
@@ -557,7 +579,7 @@ function PtoPanel({
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="min-w-0">
                 <p className="text-sm font-medium">
-                  {fmtDay(r.day, lang)} · {fmtHours(r.hours)} {t("hours")}
+                  {fmtDay(r.day, lang)} · {fmtDays(r.hours / PTO_DAY_HOURS)}
                 </p>
                 <p className="text-xs uppercase tracking-wide text-muted">{t(r.status)}</p>
                 {r.note ? <p className="mt-1 text-sm text-pretty text-ink">{r.note}</p> : null}
@@ -1007,6 +1029,218 @@ function inviteMailto(to: string, link: string): string {
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
+type ReportState =
+  | { status: "loading"; index: number }
+  | { status: "failed"; index: number }
+  | { status: "ready"; index: number; report: PayReport; data: ReportData };
+
+/** Pay-period report for admins: hours per person, PTO at 8 hours a day, missed punches, CSV downloads. */
+function ReportsPanel({ now }: { now: Date }) {
+  const { t, lang } = useI18n();
+  const fmtDays = useFmtDays();
+  const current = payPeriodIndex(now);
+  const [index, setIndex] = useState(current);
+  const [state, setState] = useState<ReportState>({ status: "loading", index: current });
+  const [attempt, setAttempt] = useState(0);
+  // The report is recomputed each minute so an open shift keeps counting; refetched when the period changes.
+  const minute = Math.floor(now.getTime() / 60_000);
+
+  useEffect(() => {
+    let live = true;
+    const period = payPeriod(index);
+    setState({ status: "loading", index });
+    loadReport({
+      data: {
+        from: period.start.toISOString(),
+        to: period.end.toISOString(),
+        yearStart: `${period.lastDay.slice(0, 4)}-01-01`,
+        lastDay: period.lastDay,
+      },
+    }).then(
+      (res) => {
+        if (!live) return;
+        if (!res.ok) return setState({ status: "failed", index });
+        const report = buildPayReport({ ...res.data, period, now: new Date() });
+        setState({ status: "ready", index, report, data: res.data });
+      },
+      () => live && setState({ status: "failed", index }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [index, attempt]);
+
+  const ready = state.status === "ready" && state.index === index ? state : null;
+  const report = ready ? buildPayReport({ ...ready.data, period: payPeriod(index), now: new Date(minute * 60_000) }) : null;
+  const period = payPeriod(index);
+  const sameYear = period.firstDay.slice(0, 4) === period.lastDay.slice(0, 4);
+  const longDay = (day: string, withYear = true) =>
+    new Date(day + "T12:00:00").toLocaleDateString(locale(lang), {
+      month: "short",
+      day: "numeric",
+      ...(withYear ? { year: "numeric" } : {}),
+    });
+  const names = new Map(report?.rows.map((r) => [r.userId, r]) ?? []);
+  const sum = (k: "week1" | "week2" | "ptoDays" | "total") => report?.rows.reduce((a, r) => a + r[k], 0) ?? 0;
+  const stamp = (iso: string | null) => {
+    if (!iso) return t("stillOpen");
+    const d = new Date(iso);
+    return `${dayKey(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+
+  function download(kind: "hours" | "shifts") {
+    if (!report) return;
+    const csv =
+      kind === "hours"
+        ? toCsv(
+            [t("colName"), t("colEmail"), t("colWeek1"), t("colWeek2"), t("colWorked"), t("colPtoDays"), t("colPtoHours"), t("colTotal"), t("colDaysLeft"), t("colMissed")],
+            report.rows.map((r) => [r.name, r.email, r.week1, r.week2, r.worked, r.ptoDays, r.ptoHours, r.total, r.ptoDaysLeft, String(r.missed)]),
+          )
+        : toCsv(
+            [t("colName"), t("colEmail"), t("colIn"), t("colOut"), t("colHours"), t("colProblem")],
+            report.shifts.map((x) => {
+              const who = names.get(x.userId);
+              return [who?.name ?? "", who?.email ?? "", stamp(x.clockIn), stamp(x.clockOut), x.hours, x.kind ? t(`missed_${x.kind}`) : ""];
+            }),
+          );
+    // The byte-order mark makes Excel read accents (Spanish names) correctly.
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${kind}-${period.firstDay}_to_${period.lastDay}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast.success(t("downloaded"));
+  }
+
+  const num = "px-1.5 py-2 text-right tabular-nums sm:px-2";
+  return (
+    <section id="reports" data-report-status={ready ? "ready" : state.status} className="space-y-4">
+      <div className="rounded-2xl border border-line bg-card p-4">
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" className={ghost + " w-11 px-0"} aria-label={t("prevPeriod")} onClick={() => setIndex((i) => i - 1)}>
+            <ChevronLeft className="size-5" aria-hidden="true" />
+          </button>
+          <div className="min-w-0 text-center">
+            <p className="font-display text-2xl font-semibold leading-tight" id="report-period">
+              {longDay(period.firstDay, !sameYear)} – {longDay(period.lastDay)}
+            </p>
+            <p className="text-sm text-muted">{index === current ? t("currentPeriod") : t("payPeriod")}</p>
+          </div>
+          <button
+            type="button"
+            className={ghost + " w-11 px-0"}
+            aria-label={t("nextPeriod")}
+            disabled={index >= current}
+            onClick={() => setIndex((i) => Math.min(current, i + 1))}
+          >
+            <ChevronRight className="size-5" aria-hidden="true" />
+          </button>
+        </div>
+        <p className="mt-3 text-sm text-pretty text-muted">{t("reportsLead")}</p>
+        {index !== current ? (
+          <button type="button" className={ghost + " mt-3"} onClick={() => setIndex(current)}>
+            {t("currentPeriod")}
+          </button>
+        ) : null}
+      </div>
+
+      {!report && state.status === "failed" ? (
+        <div className="rounded-2xl border border-line bg-card p-4" role="alert">
+          <p>{t("reportFailed")}</p>
+          <button type="button" className={solid + " mt-3"} onClick={() => setAttempt((n) => n + 1)}>
+            {t("retry")}
+          </button>
+        </div>
+      ) : null}
+      {!report && state.status === "loading" ? <p className="text-muted">{t("reportLoading")}</p> : null}
+
+      {report ? (
+        <>
+          <div className="overflow-x-auto rounded-2xl border border-line bg-card">
+            <table className="w-full border-collapse text-sm" id="report-table">
+              <thead>
+                <tr className="border-b border-line text-left text-xs text-muted">
+                  <th scope="col" className="px-3 py-2 align-bottom font-semibold">{t("colName")}</th>
+                  <th scope="col" className={num + " align-bottom font-semibold"}>{t("colWeek1")}</th>
+                  <th scope="col" className={num + " align-bottom font-semibold"}>{t("colWeek2")}</th>
+                  <th scope="col" className={num + " align-bottom font-semibold"}>{t("colPtoDays")}</th>
+                  <th scope="col" className={num + " align-bottom pr-3 font-semibold text-ink"}>{t("colTotal")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.rows.map((r) => (
+                  <tr key={r.userId} className="border-b border-line" data-report-row={r.email}>
+                    <th scope="row" className="px-3 py-2 text-left font-medium">
+                      {r.name}
+                      {r.missed > 0 ? (
+                        <span className="ml-2 rounded-full bg-paper-2 px-2 py-0.5 text-xs font-semibold text-ink">{r.missed}</span>
+                      ) : null}
+                      <span className="block text-xs font-normal text-muted">
+                        {t("colDaysLeft")}: {Math.round(r.ptoDaysLeft * 10) / 10}
+                      </span>
+                    </th>
+                    <td className={num}>{fmtHours(r.week1)}</td>
+                    <td className={num}>{fmtHours(r.week2)}</td>
+                    <td className={num}>{r.ptoDays ? Math.round(r.ptoDays * 10) / 10 : "–"}</td>
+                    <td className={num + " pr-3 font-semibold"} data-total>{fmtHours(r.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-paper-2 font-semibold">
+                  <th scope="row" className="px-3 py-2 text-left">{t("totalsRow")}</th>
+                  <td className={num}>{fmtHours(sum("week1"))}</td>
+                  <td className={num}>{fmtHours(sum("week2"))}</td>
+                  <td className={num}>{Math.round(sum("ptoDays") * 10) / 10}</td>
+                  <td className={num + " pr-3"}>{fmtHours(sum("total"))}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button type="button" id="download-hours" className={solid} onClick={() => download("hours")}>
+              {t("downloadHours")}
+            </button>
+            <button type="button" id="download-shifts" className={ghost} onClick={() => download("shifts")}>
+              {t("downloadShifts")}
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-line bg-card p-4" id="missed-punches">
+            <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("missedTitle")}</h2>
+            {report.missed.length === 0 ? (
+              <p className="mt-1 text-sm text-muted">{t("missedNone")}</p>
+            ) : (
+              <>
+                <p className="mt-1 text-sm text-muted">{t("missedLead")}</p>
+                <ul className="mt-2 divide-y divide-line">
+                  {report.missed.map((m) => (
+                    <li key={m.punchId} className="py-3" data-missed={m.kind}>
+                      <p className="text-sm font-medium">
+                        {names.get(m.userId)?.name ?? "—"} · {fmtDay(dayKey(new Date(m.clockIn)), lang)}
+                      </p>
+                      <p className="text-sm text-muted">
+                        {fmtTime(m.clockIn, lang)} – {m.clockOut ? fmtTime(m.clockOut, lang) : t("stillOpen")}
+                      </p>
+                      <p className="text-sm text-ink">{t(`missed_${m.kind}`)}</p>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+          <p className="text-xs text-muted">{fmtDays(1)} = {PTO_DAY_HOURS} {t("hours")}</p>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function InvitePanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; busy: boolean; act: Act }) {
   const { t } = useI18n();
   const [email, setEmail] = useState("");
@@ -1143,7 +1377,8 @@ function PersonCard({
 }) {
   const { t, lang } = useI18n();
   const [open, setOpen] = useState(false);
-  const [allowanceInput, setAllowanceInput] = useState(String(person.ptoAllowance));
+  const [allowanceInput, setAllowanceInput] = useState(String(person.ptoAllowance / PTO_DAY_HOURS));
+  const fmtDays = useFmtDays();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [confirm, setConfirm] = useState<number | null>(null);
@@ -1158,7 +1393,7 @@ function PersonCard({
   const label = person.fullName || person.email || "—";
 
   useEffect(() => {
-    setAllowanceInput(String(person.ptoAllowance));
+    setAllowanceInput(String(person.ptoAllowance / PTO_DAY_HOURS));
   }, [person.ptoAllowance]);
 
   return (
@@ -1221,7 +1456,7 @@ function PersonCard({
             onSubmit={(e) => {
               e.preventDefault();
               void act(
-                () => setAllowance({ data: { userId: person.userId, hours: Number(allowanceInput) } }),
+                () => setAllowance({ data: { userId: person.userId, days: Number(allowanceInput) } }),
                 "saved",
               );
             }}
@@ -1230,9 +1465,11 @@ function PersonCard({
               {t("allowance")}
               <input
                 type="number"
+                inputMode="decimal"
                 min={0}
-                max={999}
+                max={124}
                 step={0.5}
+                data-allowance={person.userId}
                 value={allowanceInput}
                 onChange={(e) => setAllowanceInput(e.target.value)}
                 className={field + " w-36"}
@@ -1250,7 +1487,7 @@ function PersonCard({
               {requests.map((r) => (
                 <li key={r.id} className="py-3">
                   <p className="text-sm font-medium">
-                    {fmtDay(r.day, lang)} · {fmtHours(r.hours)} {t("hours")} · {t(r.status)}
+                    {fmtDay(r.day, lang)} · {fmtDays(r.hours / PTO_DAY_HOURS)} · {t(r.status)}
                   </p>
                   {r.note ? <p className="text-sm text-pretty">{r.note}</p> : null}
                   <div className="mt-2 flex gap-2">
