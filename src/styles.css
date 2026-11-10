@@ -21,6 +21,9 @@
   --leaf: #f77f00;
   --leaf-ink: #003049;
   --leaf-text: #d62828;
+  /* The header bar: navy with cream text in both themes. */
+  --bar: #003049;
+  --bar-ink: #eae2b7;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,6 +40,8 @@
     --leaf: #f77f00;
     --leaf-ink: #003049;
     --leaf-text: #fcbf49;
+    --bar: color-mix(in srgb, #003049 70%, #000);
+    --bar-ink: #eae2b7;
   }
 }
 
@@ -54,6 +59,8 @@
   --color-leaf: var(--leaf);
   --color-leaf-ink: var(--leaf-ink);
   --color-leaf-text: var(--leaf-text);
+  --color-bar: var(--bar);
+  --color-bar-ink: var(--bar-ink);
 }
 
 @layer base {
@@ -71,12 +78,6 @@
     margin: 0;
     min-height: 100vh;
     background-color: var(--paper);
-    background-image: linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--line) 80%, transparent) 1px,
-      transparent 1px
-    );
-    background-size: 100% 2rem;
     color: var(--ink);
     font-family: var(--font-sans);
   }
@@ -102,6 +103,51 @@
     outline: 2px solid var(--pine);
     outline-offset: 2px;
   }
+}
+
+@layer components {
+  /* A section of the page: card stock with a soft edge, no heavy border. */
+  .panel {
+    background-color: var(--card);
+    border-radius: 1.25rem;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 55%, transparent);
+  }
+
+  /* Rows ruled like a paper time card. Used for lists of shifts. */
+  .ruled > li {
+    border-top: 1px dashed color-mix(in srgb, var(--line) 90%, transparent);
+  }
+  .ruled > li:first-child {
+    border-top: 0;
+  }
+
+  /* "On the clock" dot: a slow pulse so the state reads at a glance. */
+  .live-dot {
+    position: relative;
+  }
+  .live-dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: currentColor;
+    animation: live-pulse 2.4s ease-out infinite;
+  }
+  @keyframes live-pulse {
+    0% {
+      transform: scale(1);
+      opacity: 0.5;
+    }
+    100% {
+      transform: scale(2.6);
+      opacity: 0;
+    }
+  }
+}
+
+/* The sign-out button sits on the navy bar. */
+.account-slot span.rounded-full {
+  background-color: color-mix(in srgb, var(--bar-ink) 22%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

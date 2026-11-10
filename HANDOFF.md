@@ -78,6 +78,15 @@ The palette is [navy, red, orange, gold, cream](https://coolors.co/palette/00304
 | `leaf-text` (`#d62828`) | Red for small emphasis on paper, such as "on the clock" |
 | `pine` (`#003049`) | Navy for primary buttons, selected tabs and the Clock out button; `foam` (`#eae2b7`) text goes on it |
 | `paper` (`#eae2b7`), `paper-2` (`#fcbf49`), `card`, `line`, `ink`, `muted` | Cream and gold surfaces, borders, and navy text |
+| `bar`, `bar-ink` | The header and the sign-in band: navy with cream text in both themes |
+
+Shared styles in `src/styles.css`:
+
+- `.panel` is every section of a page: card stock with a soft edge. Use `className="panel p-4 sm:p-6"` so edges line up.
+- `.ruled` on a `<ul>` rules its rows with dashed lines, like a paper time card (used for shifts).
+- `.live-dot` is the pulsing "on the clock" dot (it stops when the viewer has reduced motion on).
+- Headings use the display face in normal capitalization (`font-display text-[1.75rem] font-bold`). Capitals are kept for the wordmark and the Clock in / Clock out button only.
+- The Clock screen is one time card (`#timecard`): status and date, the clock face (`#clock-face`, the time that will be stamped), the button, then today / this week / pay period, then the pay period dates and PTO days left.
 
 ### Platform scaffold (leave alone unless you know why)
 
