@@ -77,6 +77,7 @@ test("section: unknown and admin-only sections fall back to the clock", () => {
   assert.equal(viewFor("reports", true), "reports");
   assert.equal(viewFor("reports", false), "clock");
   assert.equal(viewFor("daysoff", false), "daysoff");
+  assert.equal(viewFor("settings", false), "settings");
   assert.equal(viewFor("", true), "clock");
-  assert.equal(viewFor("settings", true), "clock");
+  assert.equal(viewFor("preferences", true), "clock");
 });

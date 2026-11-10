@@ -8,6 +8,7 @@ import {
   Clock as ClockIcon,
   Menu,
   PenLine,
+  SlidersHorizontal,
   TreePalm,
   UserPlus,
   Users,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { INVITE_KEY } from "@/components/auth-screen";
+import { SettingsPanel } from "@/components/settings-panel";
 import { UserButton } from "@/lib/auth/gates";
 import {
   ADMIN_VIEWS,
@@ -274,7 +276,7 @@ export function ClockApp() {
       data-role={snap?.me.role}
       data-shift={snap ? (onClock ? "in" : "out") : undefined}
     >
-      <header className="sticky top-0 z-20 border-b-4 border-leaf bg-paper">
+      <header className="sticky top-0 z-20 border-b-4 border-leaf bg-bar text-bar-ink">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           {snap ? (
             <button
@@ -283,7 +285,7 @@ export function ClockApp() {
               aria-expanded={menuOpen}
               aria-controls="menu-drawer"
               onClick={() => setMenuOpen(true)}
-              className="flex h-11 min-w-0 items-center gap-2 rounded-lg border border-line bg-card px-3 text-sm font-semibold md:hidden"
+              className="flex h-11 min-w-0 shrink items-center gap-2 rounded-lg border border-bar-ink/30 px-3 text-sm font-semibold md:hidden"
             >
               <Menu className="size-5 shrink-0" aria-hidden="true" />
               <span className="sr-only">{t("menu")}: </span>
@@ -300,7 +302,17 @@ export function ClockApp() {
             {t("appName")}
           </p>
           <div className="flex shrink-0 items-center gap-2">
-            <div role="group" aria-label={t("language")} className="flex overflow-hidden rounded-lg border border-line">
+            {/* Phones get one switch button so the menu button keeps its label, even with large text. */}
+            <button
+              type="button"
+              id="lang-switch"
+              onClick={() => setLang(lang === "en" ? "es" : "en")}
+              aria-label={lang === "en" ? "Español" : "English"}
+              className="h-11 min-w-11 rounded-lg border border-bar-ink/30 px-3 text-sm font-semibold sm:hidden"
+            >
+              {lang === "en" ? "ES" : "EN"}
+            </button>
+            <div role="group" aria-label={t("language")} className="hidden overflow-hidden rounded-lg border border-bar-ink/30 sm:flex">
               {(["en", "es"] as const).map((code) => (
                 <button
                   key={code}
@@ -309,7 +321,7 @@ export function ClockApp() {
                   onClick={() => setLang(code)}
                   className={
                     "h-11 min-w-11 px-3 text-sm font-semibold " +
-                    (lang === code ? "bg-pine text-foam" : "bg-card text-muted")
+                    (lang === code ? "bg-leaf text-leaf-ink" : "text-bar-ink/75 hover:text-bar-ink")
                   }
                 >
                   {code.toUpperCase()}
@@ -338,7 +350,7 @@ export function ClockApp() {
         <main className="w-full min-w-0 max-w-3xl flex-1 pt-4">
           {status === "booting" ? <p className="text-muted">{t("boot")}</p> : null}
           {status === "failed" ? (
-            <div className="rounded-2xl border border-line bg-card p-4" role="alert">
+            <div className="panel p-4 sm:p-6" role="alert">
               <p>{t("loadError")}</p>
               <button type="button" className={"mt-3 " + solid} onClick={() => void reload()}>
                 {t("retry")}
@@ -375,6 +387,8 @@ export function ClockApp() {
                   go("timeoff");
                 }}
               />
+            ) : view === "settings" ? (
+              <SettingsPanel />
             ) : view === "daysoff" ? (
               <DaysOffPanel snap={snap} now={now} busy={busy} act={act} />
             ) : view === "team" && admin ? (
@@ -396,6 +410,7 @@ export function ClockApp() {
 const NAV_LABEL: Record<View, CopyKey> = {
   clock: "navClock",
   timeoff: "navTimeOff",
+  settings: "navSettings",
   calendar: "navCalendar",
   daysoff: "navDaysOff",
   team: "navTeam",
@@ -405,6 +420,7 @@ const NAV_LABEL: Record<View, CopyKey> = {
 const NAV_ICON: Record<View, LucideIcon> = {
   clock: ClockIcon,
   timeoff: TreePalm,
+  settings: SlidersHorizontal,
   calendar: CalendarDays,
   daysoff: CalendarOff,
   team: Users,
@@ -412,7 +428,7 @@ const NAV_ICON: Record<View, LucideIcon> = {
   reports: ChartColumn,
 };
 const NAV_GROUPS: Array<{ label: CopyKey; views: View[] }> = [
-  { label: "groupYou", views: ["clock", "timeoff"] },
+  { label: "groupYou", views: ["clock", "timeoff", "settings"] },
   { label: "groupEveryone", views: ["calendar", "daysoff"] },
   { label: "groupAdmin", views: ["team", "invite", "reports"] },
 ];
@@ -566,72 +582,96 @@ function Mine({
   return (
     <div className="space-y-4">
       <HolidayBanner holidays={snap.holidays} now={now} />
-      <section className="rounded-2xl border border-line bg-card p-4">
-        <p className="text-sm font-medium text-muted">{open ? t("working") : t("notWorking")}</p>
-        {open ? (
-          <p className="mt-1 text-sm text-ink">{t("since", { time: fmtTime(open.clockIn, lang) })}</p>
-        ) : null}
-        <button
-          id="clock-btn"
-          type="button"
-          disabled={busy}
-          aria-busy={busy}
-          onClick={() =>
-            void act(
-              () => togglePunch({ data: { targetUserId: "", action: shiftAction(!!open) } }),
-              open ? "clockedOut" : "clockedIn",
-            )
-          }
-          className={
-            "mt-4 flex min-h-32 w-full flex-col items-center justify-center rounded-2xl px-4 py-6 " +
-            "shadow-[inset_0_-5px_0_rgb(0_0_0/0.16)] transition-transform active:translate-y-0.5 disabled:opacity-60 " +
-            (open ? "bg-pine text-foam" : "bg-leaf text-leaf-ink")
-          }
-        >
-          <span className="font-display text-5xl font-bold uppercase leading-none tracking-wide">
-            {open ? t("clockOut") : t("clockIn")}
-          </span>
-          <span className="mt-3 font-display text-3xl tabular-nums tracking-widest">
-            {open ? fmtHms(now.getTime() - new Date(open.clockIn).getTime()) : fmtHours(todayH)}
-          </span>
-          <span className="mt-1 text-xs uppercase tracking-widest opacity-80">
-            {open ? t("elapsed") : t("today")}
-          </span>
-        </button>
+      <section className="panel overflow-hidden" id="timecard">
+        <div className="p-4 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <p className={"flex items-center gap-2 text-sm font-semibold " + (open ? "text-leaf-text" : "text-muted")}>
+              <span
+                className={"size-2.5 shrink-0 rounded-full " + (open ? "live-dot bg-leaf-text text-leaf-text" : "bg-muted")}
+                aria-hidden="true"
+              />
+              {open ? t("working") : t("notWorking")}
+              {open ? <span className="font-medium text-muted">{t("since", { time: fmtTime(open.clockIn, lang) })}</span> : null}
+            </p>
+            <p className="text-sm text-muted">
+              {now.toLocaleDateString(locale(lang), { weekday: "long", month: "long", day: "numeric" })}
+            </p>
+          </div>
+          {/* The punch clock face: the time that will be stamped. */}
+          <p className="mt-3 font-display text-7xl font-bold leading-none tracking-tight tabular-nums sm:text-8xl" id="clock-face">
+            {new Intl.DateTimeFormat(locale(lang), { hour: "numeric", minute: "2-digit" }).formatToParts(now).map((part, n) =>
+              part.type === "dayPeriod" ? (
+                <span key={n} className="ml-1 align-top text-3xl font-semibold text-muted sm:text-4xl">
+                  {part.value.trim()}
+                </span>
+              ) : part.type === "literal" && /^\s+$/.test(part.value) ? null : (
+                <span key={n}>{part.value}</span>
+              ),
+            )}
+          </p>
+          <button
+            id="clock-btn"
+            type="button"
+            disabled={busy}
+            aria-busy={busy}
+            onClick={() =>
+              void act(
+                () => togglePunch({ data: { targetUserId: "", action: shiftAction(!!open) } }),
+                open ? "clockedOut" : "clockedIn",
+              )
+            }
+            className={
+              "mt-5 flex min-h-28 w-full flex-col items-center justify-center rounded-2xl px-4 py-5 " +
+              "shadow-[inset_0_-6px_0_rgb(0_0_0/0.18)] transition-transform active:translate-y-0.5 active:shadow-[inset_0_-2px_0_rgb(0_0_0/0.18)] disabled:opacity-60 " +
+              (open ? "bg-pine text-foam" : "bg-leaf text-leaf-ink")
+            }
+          >
+            <span className="font-display text-5xl font-bold uppercase leading-none tracking-wide">
+              {open ? t("clockOut") : t("clockIn")}
+            </span>
+            {open ? (
+              <span className="mt-2 text-sm font-semibold tabular-nums opacity-90">
+                {fmtHms(now.getTime() - new Date(open.clockIn).getTime())} · {t("elapsed")}
+              </span>
+            ) : null}
+          </button>
+        </div>
+        <dl className="grid grid-cols-3 border-t border-dashed border-line">
+          {(
+            [
+              ["today", todayH],
+              ["thisWeek", weekH],
+              ["payPeriod", periodH],
+            ] as const
+          ).map(([key, value], n) => (
+            <div key={key} className={"px-2 py-3 text-center " + (n > 0 ? "border-l border-dashed border-line" : "")}>
+              <dt className="text-xs font-semibold text-muted">{t(key)}</dt>
+              <dd className="mt-0.5 flex flex-wrap items-baseline justify-center gap-x-1">
+                <span className="font-display text-3xl font-bold tabular-nums">{fmtHours(value)}</span>
+                <span className="text-xs font-medium text-muted">{t("hours")}</span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t border-dashed border-line px-4 py-3 text-sm sm:px-6">
+          <p className="text-muted" id="pay-period-note">
+            {t("weekNote", { from: fmtDay(period.firstDay, lang), to: fmtDay(period.lastDay, lang) })}
+          </p>
+          <p className="font-semibold" id="pto-days-left">
+            {t("ptoLeft")}: {Math.round(daysLeft * 10) / 10}
+          </p>
+        </div>
       </section>
 
-      <section className="grid grid-cols-3 gap-2">
-        <Stat label={t("today")} value={fmtHours(todayH)} unit={t("hours")} />
-        <Stat label={t("thisWeek")} value={fmtHours(weekH)} unit={t("hours")} />
-        <Stat label={t("payPeriod")} value={fmtHours(periodH)} unit={t("hours")} />
-      </section>
-      <p className="text-sm text-muted" id="pay-period-note">
-        {t("weekNote", { from: fmtDay(period.firstDay, lang), to: fmtDay(period.lastDay, lang) })}
-      </p>
-      <p className="text-sm font-medium text-ink" id="pto-days-left">
-        {t("ptoLeft")}: {Math.round(daysLeft * 10) / 10}
-      </p>
-      <p className="text-sm text-muted">{t("ptoHint")}</p>
-
-      <section className="rounded-2xl border border-line bg-card p-4">
-        <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("shifts")}</h2>
+      <section className="panel p-4 sm:p-6">
+        <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("shifts")}</h2>
         {recent.length === 0 ? <p className="mt-2 text-sm text-muted">{t("noShifts")}</p> : null}
-        <ul className="mt-3 divide-y divide-line">
+        <ul className="ruled mt-2">
           {recent.map((p) => (
             <ShiftRow key={p.id} punch={p} now={now} lang={lang} />
           ))}
         </ul>
       </section>
-    </div>
-  );
-}
-
-function Stat({ label, value, unit }: { label: string; value: string; unit: string }) {
-  return (
-    <div className="rounded-xl border border-line bg-card px-2 py-3 text-center">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</p>
-      <p className="mt-1 font-display text-3xl font-bold tabular-nums leading-none">{value}</p>
-      <p className="mt-1 text-xs text-muted">{unit}</p>
     </div>
   );
 }
@@ -675,7 +715,7 @@ function HolidayBanner({ holidays, now }: { holidays: Holiday[]; now: Date }) {
   const todays = holidays.filter((h) => daysUntil(h.day, now) === 0);
   if (todays.length > 0) {
     return (
-      <p className="flex items-start gap-2 rounded-xl border border-line bg-paper-2 px-3 py-3 text-sm font-medium" role="status">
+      <p className="flex items-start gap-2 rounded-2xl bg-paper-2 px-4 py-3 text-sm font-semibold text-ink" role="status">
         <CalendarOff className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         {t("todayOff", { name: todays.map(nameOf).join(" · ") })}
       </p>
@@ -689,7 +729,7 @@ function HolidayBanner({ holidays, now }: { holidays: Holiday[]; now: Date }) {
   const name = nameOf(next.h);
   const text = next.n === 1 ? t("nextOff1", { name }) : t("nextOff", { name, n: next.n });
   return (
-    <p className="flex items-start gap-2 rounded-xl border border-line bg-paper-2 px-3 py-3 text-sm font-medium" role="status">
+    <p className="flex items-start gap-2 rounded-2xl bg-paper-2 px-4 py-3 text-sm font-semibold text-ink" role="status">
       <CalendarOff className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
       {text}
     </p>
@@ -726,8 +766,8 @@ function PtoPanel({
     .sort((a, b) => a.day.localeCompare(b.day) || b.id - a.id);
 
   return (
-    <section id="pto-request" className="rounded-2xl border border-line bg-card p-4">
-      <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("ptoTitle")}</h2>
+    <section id="pto-request" className="panel p-4 sm:p-6">
+      <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("ptoTitle")}</h2>
       <p className="mt-1 text-sm text-pretty text-muted">{t("ptoLead")}</p>
       <form
         className="mt-3 space-y-3"
@@ -759,7 +799,7 @@ function PtoPanel({
         </button>
       </form>
 
-      <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-muted">{t("myRequests")}</h3>
+      <h3 className="mt-5 text-sm font-semibold text-muted">{t("myRequests")}</h3>
       <p className="mt-1 text-sm text-muted">{t("hoursBack")}</p>
       {rows.length === 0 ? <p className="mt-3 text-sm text-muted">{t("noPto")}</p> : null}
       <ul className="mt-2 divide-y divide-line">
@@ -771,7 +811,7 @@ function PtoPanel({
                 <p className="text-sm font-medium">
                   {fmtDay(r.day, lang)} · {fmtDays(r.hours / PTO_DAY_HOURS)}
                 </p>
-                <p className="text-xs uppercase tracking-wide text-muted">{t(r.status)}</p>
+                <p className="text-xs font-medium text-muted">{t(r.status)}</p>
                 {r.note ? <p className="mt-1 text-sm text-pretty text-ink">{r.note}</p> : null}
               </div>
               {cancellable ? (
@@ -865,8 +905,8 @@ function TeamCalendar({
   const focusFederalOpen = focusFederal && !isClosed(focusDay) ? focusFederal : null;
 
   return (
-    <section className="rounded-2xl border border-line bg-card p-4">
-      <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("calendarTitle")}</h2>
+    <section className="panel p-4 sm:p-6">
+      <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("calendarTitle")}</h2>
       <p className="mt-1 text-sm text-pretty text-muted">{t("calLead")}</p>
 
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
@@ -886,7 +926,7 @@ function TeamCalendar({
         >
           <ChevronLeft className="size-5" aria-hidden="true" />
         </button>
-        <p className="font-display text-2xl font-semibold uppercase tracking-wide">{monthLabel}</p>
+        <p className="font-display text-[1.75rem] font-bold leading-tight">{monthLabel}</p>
         <button
           type="button"
           aria-label={t("nextMonth")}
@@ -942,7 +982,7 @@ function TeamCalendar({
       </div>
 
       <div className="mt-4 rounded-xl border border-line bg-paper p-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t("thisDay")}</p>
+        <p className="text-xs font-semibold text-muted">{t("thisDay")}</p>
         <p className="mt-1 font-medium">{fmtDay(focusDay, lang)}</p>
         {focusHoliday.length === 0 && focusOff.length === 0 && focusPending.length === 0 && !focusFederalOpen ? (
           <p className="mt-2 text-sm text-muted">{t("nothingDay")}</p>
@@ -1099,8 +1139,8 @@ function DaysOffPanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; bus
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-line bg-card p-4" id="days-off">
-        <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("daysOffTitle")}</h2>
+      <section className="panel p-4 sm:p-6" id="days-off">
+        <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("daysOffTitle")}</h2>
         <p className="mt-1 text-sm text-pretty text-muted">{admin ? t("daysOffLeadAdmin") : t("daysOffLead")}</p>
         {upcoming.length === 0 ? <p className="mt-3 text-sm text-muted">{t("daysOffNone")}</p> : null}
         <ul className="mt-2 divide-y divide-line">{upcoming.map((h) => row(h, true))}</ul>
@@ -1115,7 +1155,7 @@ function DaysOffPanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; bus
       {admin ? (
         <form
           id="add-day-off"
-          className="space-y-3 rounded-2xl border border-line bg-card p-4"
+          className="panel space-y-3 p-4 sm:p-6"
           onSubmit={(e) => {
             e.preventDefault();
             void act(() => addHoliday({ data: { day, name } }), "saved").then((ok) => {
@@ -1123,7 +1163,7 @@ function DaysOffPanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; bus
             });
           }}
         >
-          <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("addDayOffTitle")}</h2>
+          <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("addDayOffTitle")}</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-sm font-medium">
               {t("dayOffDate")}
@@ -1148,9 +1188,9 @@ function DaysOffPanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; bus
         </form>
       ) : null}
 
-      <section className="rounded-2xl border border-line bg-card p-4" id="federal-holidays">
+      <section className="panel p-4 sm:p-6" id="federal-holidays">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("federalTitle", { year })}</h2>
+          <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("federalTitle", { year })}</h2>
           <div className="flex shrink-0 gap-2">
             <button type="button" aria-label={t("prevYear")} className={ghost + " w-11 px-0"} onClick={() => setYear((y) => y - 1)}>
               <ChevronLeft className="size-5" aria-hidden="true" />
@@ -1400,7 +1440,7 @@ function ReportsPanel({ now }: { now: Date }) {
   const num = "px-1.5 py-2 text-right tabular-nums sm:px-2";
   return (
     <section id="reports" data-report-status={ready ? "ready" : state.status} className="space-y-4">
-      <div className="rounded-2xl border border-line bg-card p-4">
+      <div className="panel p-4 sm:p-6">
         <div className="flex items-center justify-between gap-2">
           <button type="button" className={ghost + " w-11 px-0"} aria-label={t("prevPeriod")} onClick={() => setIndex((i) => i - 1)}>
             <ChevronLeft className="size-5" aria-hidden="true" />
@@ -1430,7 +1470,7 @@ function ReportsPanel({ now }: { now: Date }) {
       </div>
 
       {!report && state.status === "failed" ? (
-        <div className="rounded-2xl border border-line bg-card p-4" role="alert">
+        <div className="panel p-4 sm:p-6" role="alert">
           <p>{t("reportFailed")}</p>
           <button type="button" className={solid + " mt-3"} onClick={() => setAttempt((n) => n + 1)}>
             {t("retry")}
@@ -1441,7 +1481,7 @@ function ReportsPanel({ now }: { now: Date }) {
 
       {report ? (
         <>
-          <div className="overflow-x-auto rounded-2xl border border-line bg-card">
+          <div className="overflow-x-auto panel">
             <table className="w-full border-collapse text-sm" id="report-table">
               <thead>
                 <tr className="border-b border-line text-left text-xs text-muted">
@@ -1492,8 +1532,8 @@ function ReportsPanel({ now }: { now: Date }) {
             </button>
           </div>
 
-          <div className="rounded-2xl border border-line bg-card p-4" id="missed-punches">
-            <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("missedTitle")}</h2>
+          <div className="panel p-4 sm:p-6" id="missed-punches">
+            <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("missedTitle")}</h2>
             {report.missed.length === 0 ? (
               <p className="mt-1 text-sm text-muted">{t("missedNone")}</p>
             ) : (
@@ -1532,8 +1572,8 @@ function InvitePanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; busy
     act(() => createInvite({ data: { email: to, role: as } }), snap.emailReady ? "inviteSent" : "inviteCreated");
 
   return (
-    <section id="invite" className="rounded-2xl border border-line bg-card p-4">
-      <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("inviteTitle")}</h2>
+    <section id="invite" className="panel p-4 sm:p-6">
+      <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("inviteTitle")}</h2>
       <p className="mt-1 text-sm text-pretty text-muted">{snap.emailReady ? t("inviteLead") : t("inviteLeadNoEmail")}</p>
       <form
         className="mt-3 space-y-3"
@@ -1580,7 +1620,7 @@ function InvitePanel({ snap, now, busy, act }: { snap: Snapshot; now: Date; busy
 
       {invites.length > 0 ? (
         <>
-          <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-muted">{t("pendingInvites")}</h3>
+          <h3 className="mt-5 text-sm font-semibold text-muted">{t("pendingInvites")}</h3>
           <ul className="mt-1 divide-y divide-line">
             {invites.map((inv) => {
               const expired = inviteState({ acceptedAt: null, expiresAt: inv.expiresAt }, now) === "expired";
@@ -1678,7 +1718,7 @@ function PersonCard({
   }, [person.ptoAllowance]);
 
   return (
-    <article className="rounded-2xl border border-line bg-card p-4">
+    <article className="panel p-4 sm:p-6">
       <button type="button" className="flex w-full items-start justify-between gap-3 text-left" onClick={() => setOpen((v) => !v)}>
         <div className="min-w-0">
           <p className="truncate font-semibold">
@@ -1762,7 +1802,7 @@ function PersonCard({
           </form>
 
           <div>
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">{t("requests")}</h3>
+            <h3 className="text-sm font-semibold text-muted">{t("requests")}</h3>
             {requests.length === 0 ? <p className="mt-2 text-sm text-muted">{t("noPto")}</p> : null}
             <ul className="divide-y divide-line">
               {requests.map((r) => (
@@ -1793,7 +1833,7 @@ function PersonCard({
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">{t("shiftsFor")}</h3>
+            <h3 className="text-sm font-semibold text-muted">{t("shiftsFor")}</h3>
             <form
               className="mt-2 space-y-2"
               onSubmit={(e) => {

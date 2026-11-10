@@ -1,13 +1,21 @@
 @import "tailwindcss";
 
 /*
- * Palette: https://coolors.co/palette/003049-d62828-f77f00-fcbf49-eae2b7
- *   #003049 navy    ink, and the dark buttons (Clock out, selected tabs)
- *   #d62828 red     small emphasis, such as "on the clock"
- *   #f77f00 orange  the brand accent: Clock in, the header rule. Navy text on it, never white.
- *   #fcbf49 gold    selected surfaces and lines
- *   #eae2b7 cream   paper, cards, and text on navy
+ * Color schemes. Every component uses only these tokens, so a scheme is just a
+ * set of values. Choose one in Settings (data-scheme on <html>); light or dark
+ * follows the device unless data-mode is set. See src/lib/appearance.ts.
+ *
+ * Token roles
+ *   paper / paper-2 / card   page, tinted surfaces, sections
+ *   ink / muted / line       text, quieter text, edges
+ *   pine + foam              dark buttons (Clock out, selected) and the text on them
+ *   leaf + leaf-ink          the brand accent (Clock in, header rule) and the text on it
+ *   leaf-text                small emphasis on paper, such as "On the clock"
+ *   bar + bar-ink            the header bar and its text
  */
+
+/* Classic: https://coolors.co/palette/003049-d62828-f77f00-fcbf49-eae2b7
+ *   #003049 navy · #d62828 red · #f77f00 orange · #fcbf49 gold · #eae2b7 cream */
 :root {
   color-scheme: light;
   --paper: #eae2b7;
@@ -21,10 +29,11 @@
   --leaf: #f77f00;
   --leaf-ink: #003049;
   --leaf-text: #d62828;
+  --bar: #003049;
+  --bar-ink: #eae2b7;
 }
-
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-mode="light"]) {
     color-scheme: dark;
     --paper: #003049;
     --paper-2: color-mix(in srgb, #003049 72%, #000);
@@ -37,7 +46,154 @@
     --leaf: #f77f00;
     --leaf-ink: #003049;
     --leaf-text: #fcbf49;
+    --bar: color-mix(in srgb, #003049 70%, #000);
+    --bar-ink: #eae2b7;
   }
+}
+:root[data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #003049;
+  --paper-2: color-mix(in srgb, #003049 72%, #000);
+  --ink: #eae2b7;
+  --muted: color-mix(in srgb, #eae2b7 68%, #003049);
+  --line: color-mix(in srgb, #fcbf49 40%, #003049);
+  --card: color-mix(in srgb, #003049 78%, #eae2b7);
+  --pine: #fcbf49;
+  --foam: #003049;
+  --leaf: #f77f00;
+  --leaf-ink: #003049;
+  --leaf-text: #fcbf49;
+  --bar: color-mix(in srgb, #003049 70%, #000);
+  --bar-ink: #eae2b7;
+}
+
+/* Forest: https://coolors.co/palette/132a13-31572c-4f772d-90a955-ecf39e
+ *   #132a13 deep green · #31572c pine · #4f772d moss · #90a955 leaf · #ecf39e lime cream */
+:root[data-scheme="forest"] {
+  color-scheme: light;
+  --paper: color-mix(in srgb, #ecf39e 38%, white);
+  --paper-2: #ecf39e;
+  --ink: #132a13;
+  --muted: color-mix(in srgb, #132a13 70%, #ecf39e);
+  --line: color-mix(in srgb, #4f772d 32%, #ecf39e);
+  --card: color-mix(in srgb, #ecf39e 14%, white);
+  --pine: #31572c;
+  --foam: #ecf39e;
+  --leaf: #90a955;
+  --leaf-ink: #132a13;
+  --leaf-text: #31572c;
+  --bar: #132a13;
+  --bar-ink: #ecf39e;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme="forest"]:not([data-mode="light"]) {
+    color-scheme: dark;
+    --paper: #132a13;
+    --paper-2: color-mix(in srgb, #132a13 70%, #000);
+    --ink: #ecf39e;
+    --muted: color-mix(in srgb, #ecf39e 68%, #132a13);
+    --line: color-mix(in srgb, #4f772d 70%, #132a13);
+    --card: color-mix(in srgb, #31572c 55%, #132a13);
+    --pine: #ecf39e;
+    --foam: #132a13;
+    --leaf: #90a955;
+    --leaf-ink: #132a13;
+    --leaf-text: #90a955;
+    --bar: color-mix(in srgb, #132a13 70%, #000);
+    --bar-ink: #ecf39e;
+  }
+}
+:root[data-scheme="forest"][data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #132a13;
+  --paper-2: color-mix(in srgb, #132a13 70%, #000);
+  --ink: #ecf39e;
+  --muted: color-mix(in srgb, #ecf39e 68%, #132a13);
+  --line: color-mix(in srgb, #4f772d 70%, #132a13);
+  --card: color-mix(in srgb, #31572c 55%, #132a13);
+  --pine: #ecf39e;
+  --foam: #132a13;
+  --leaf: #90a955;
+  --leaf-ink: #132a13;
+  --leaf-text: #90a955;
+  --bar: color-mix(in srgb, #132a13 70%, #000);
+  --bar-ink: #ecf39e;
+}
+
+/* High contrast: black and white with a yellow accent, for anyone who needs
+ * the strongest difference between text and background. */
+:root[data-scheme="contrast"] {
+  color-scheme: light;
+  --paper: #ffffff;
+  --paper-2: #fff2a8;
+  --ink: #000000;
+  --muted: #1f1f1f;
+  --line: #000000;
+  --card: #ffffff;
+  --pine: #000000;
+  --foam: #ffffff;
+  --leaf: #ffd400;
+  --leaf-ink: #000000;
+  --leaf-text: #a00000;
+  --bar: #000000;
+  --bar-ink: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme="contrast"]:not([data-mode="light"]) {
+    color-scheme: dark;
+    --paper: #000000;
+    --paper-2: #2b2600;
+    --ink: #ffffff;
+    --muted: #e8e8e8;
+    --line: #ffffff;
+    --card: #000000;
+    --pine: #ffffff;
+    --foam: #000000;
+    --leaf: #ffd400;
+    --leaf-ink: #000000;
+    --leaf-text: #ffd400;
+    --bar: #000000;
+    --bar-ink: #ffffff;
+  }
+}
+:root[data-scheme="contrast"][data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #000000;
+  --paper-2: #2b2600;
+  --ink: #ffffff;
+  --muted: #e8e8e8;
+  --line: #ffffff;
+  --card: #000000;
+  --pine: #ffffff;
+  --foam: #000000;
+  --leaf: #ffd400;
+  --leaf-ink: #000000;
+  --leaf-text: #ffd400;
+  --bar: #000000;
+  --bar-ink: #ffffff;
+}
+/* In high contrast every edge is drawn in full, and links are underlined. */
+:root[data-scheme="contrast"] .panel {
+  box-shadow: 0 0 0 2px var(--line);
+}
+:root[data-scheme="contrast"] a {
+  text-decoration: underline;
+}
+
+/* Text size scales everything sized in rem (text, spacing, buttons) together. */
+:root[data-text="large"] {
+  font-size: 112.5%;
+}
+:root[data-text="xlarge"] {
+  font-size: 125%;
+}
+
+/* Spacing: Tailwind sizes padding, gaps and button heights from --spacing. */
+:root[data-density="compact"] {
+  --spacing: 0.2rem;
+}
+:root[data-density="roomy"] {
+  --spacing: 0.3rem;
 }
 
 @theme inline {
@@ -54,6 +210,8 @@
   --color-leaf: var(--leaf);
   --color-leaf-ink: var(--leaf-ink);
   --color-leaf-text: var(--leaf-text);
+  --color-bar: var(--bar);
+  --color-bar-ink: var(--bar-ink);
 }
 
 @layer base {
@@ -71,12 +229,6 @@
     margin: 0;
     min-height: 100vh;
     background-color: var(--paper);
-    background-image: linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--line) 80%, transparent) 1px,
-      transparent 1px
-    );
-    background-size: 100% 2rem;
     color: var(--ink);
     font-family: var(--font-sans);
   }
@@ -104,6 +256,51 @@
   }
 }
 
+@layer components {
+  /* A section of the page: card stock with a soft edge, no heavy border. */
+  .panel {
+    background-color: var(--card);
+    border-radius: 1.25rem;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 55%, transparent);
+  }
+
+  /* Rows ruled like a paper time card. Used for lists of shifts. */
+  .ruled > li {
+    border-top: 1px dashed color-mix(in srgb, var(--line) 90%, transparent);
+  }
+  .ruled > li:first-child {
+    border-top: 0;
+  }
+
+  /* "On the clock" dot: a slow pulse so the state reads at a glance. */
+  .live-dot {
+    position: relative;
+  }
+  .live-dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: currentColor;
+    animation: live-pulse 2.4s ease-out infinite;
+  }
+  @keyframes live-pulse {
+    0% {
+      transform: scale(1);
+      opacity: 0.5;
+    }
+    100% {
+      transform: scale(2.6);
+      opacity: 0;
+    }
+  }
+}
+
+/* The sign-out button sits on the navy bar. */
+.account-slot span.rounded-full {
+  background-color: color-mix(in srgb, var(--bar-ink) 22%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -118,4 +315,13 @@
   .account-slot span:not(.rounded-full) {
     display: none;
   }
+}
+
+/* "Reduce motion" chosen in Settings, whatever the device says. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }

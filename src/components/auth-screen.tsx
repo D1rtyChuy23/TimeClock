@@ -22,32 +22,37 @@ type Mode = "in" | "up" | "forgot" | "sent";
 function Shell({ children }: { children: ReactNode }) {
   const { t, lang, setLang } = useI18n();
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-4 py-10">
-      <div className="flex items-center justify-between gap-3">
-        <p className="flex min-w-0 items-center gap-3 font-display text-4xl font-bold uppercase leading-none tracking-wide text-ink">
-          <svg viewBox="0 0 32 32" className="size-10 shrink-0" aria-hidden="true">
-            <rect width="32" height="32" rx="8" className="fill-leaf" />
-            <circle cx="16" cy="16" r="8" fill="none" strokeWidth="2" className="stroke-leaf-ink" />
-            <path d="M16 11.5V16l3 2" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="stroke-leaf-ink" />
-          </svg>
-          {t("appName")}
-        </p>
-        <div role="group" aria-label={t("language")} className="flex shrink-0 overflow-hidden rounded-lg border border-line">
-          {(["en", "es"] as const).map((code) => (
-            <button
-              key={code}
-              type="button"
-              aria-pressed={lang === code}
-              onClick={() => setLang(code)}
-              className={"h-11 min-w-11 px-3 text-sm font-semibold " + (lang === code ? "bg-pine text-foam" : "bg-card text-muted")}
-            >
-              {code.toUpperCase()}
-            </button>
-          ))}
+    <div className="min-h-screen">
+      <div className="border-b-4 border-leaf bg-bar text-bar-ink">
+        <div className="mx-auto flex w-full max-w-md items-center justify-between gap-3 px-4 py-4">
+          <p className="flex min-w-0 items-center gap-2 font-display text-3xl font-bold uppercase leading-none tracking-wide whitespace-nowrap">
+            <svg viewBox="0 0 32 32" className="size-9 shrink-0" aria-hidden="true">
+              <rect width="32" height="32" rx="8" className="fill-leaf" />
+              <circle cx="16" cy="16" r="8" fill="none" strokeWidth="2" className="stroke-leaf-ink" />
+              <path d="M16 11.5V16l3 2" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="stroke-leaf-ink" />
+            </svg>
+            {t("appName")}
+          </p>
+          <div role="group" aria-label={t("language")} className="flex shrink-0 overflow-hidden rounded-lg border border-bar-ink/30">
+            {(["en", "es"] as const).map((code) => (
+              <button
+                key={code}
+                type="button"
+                aria-pressed={lang === code}
+                onClick={() => setLang(code)}
+                className={
+                  "h-11 min-w-11 px-3 text-sm font-semibold " +
+                  (lang === code ? "bg-leaf text-leaf-ink" : "text-bar-ink/75 hover:text-bar-ink")
+                }
+              >
+                {code.toUpperCase()}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-      {children}
-    </main>
+      <main className="mx-auto flex w-full max-w-md flex-col px-4 pt-8 pb-10">{children}</main>
+    </div>
   );
 }
 
@@ -176,16 +181,16 @@ export function AuthScreen() {
 
   return (
     <Shell>
-      <h1 className="mt-3 text-xl font-semibold text-ink">{invited ? t("invitedTitle") : t("welcome")}</h1>
+      <h1 className="font-display text-4xl font-bold leading-tight text-ink">{invited ? t("invitedTitle") : t("welcome")}</h1>
       <p className="mt-1 text-pretty text-muted">{invited ? t("invitedLead") : t("tagline")}</p>
       {invite === "bad" ? (
-        <p className="mt-4 rounded-xl border border-line bg-paper-2 px-3 py-3 text-sm font-medium" role="alert">
+        <p className="mt-4 rounded-2xl bg-paper-2 px-4 py-3 text-sm font-semibold text-ink" role="alert">
           {t("inviteBad")}
         </p>
       ) : null}
 
-      <form onSubmit={onSubmit} data-mode={mode} className="mt-8 space-y-3 rounded-2xl border border-line bg-card p-4">
-        <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{title}</h2>
+      <form onSubmit={onSubmit} data-mode={mode} className="panel mt-6 space-y-3 p-4 sm:p-5">
+        <h2 className="font-display text-[1.75rem] font-bold leading-tight">{title}</h2>
 
         {mode === "sent" ? (
           <p className="text-pretty text-ink" role="status">
@@ -314,8 +319,8 @@ export function ResetScreen() {
 
   return (
     <Shell>
-      <form onSubmit={onSubmit} data-state={state} className="mt-8 space-y-3 rounded-2xl border border-line bg-card p-4">
-        <h2 className="font-display text-2xl font-semibold uppercase tracking-wide">{t("newPasswordTitle")}</h2>
+      <form onSubmit={onSubmit} data-state={state} className="panel mt-6 space-y-3 p-4 sm:p-5">
+        <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("newPasswordTitle")}</h2>
         {state === "bad" ? (
           <p className="text-pretty text-ink" role="alert">
             {t("resetBadLink")}

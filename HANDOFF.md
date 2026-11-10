@@ -16,6 +16,7 @@ A time clock for a small team (about 9 people: 3 admins, 6 employees). It must s
 |---|---|---|
 | You | Clock | The clock button, hours today / this week / this pay period, PTO days left, recent shifts, the next-day-off notice |
 | You | Time off | Request a day off, my requests |
+| You | Settings | Display settings for this device: color scheme, light or dark, text size, spacing, motion, language |
 | Everyone | Calendar | Month calendar of closures and approved time off; "Request this day" opens Time off with the day filled in |
 | Everyone | Company days off | **Every day the shop is closed, in date order**, with past ones folded away; admins add or remove days here and switch federal holidays on or off (with arrows to move between years) |
 | Admin | Team | Each person: hours, PTO, shifts, role |
@@ -68,16 +69,48 @@ The first account ever created becomes the admin.
 | `src/routes/index.tsx`, `login.tsx` | Booting / signed out / signed in gate |
 | `src/routes/reset-password.tsx` | Where the link in a reset email lands |
 
-### Colors
+### Colors and display settings
 
-The palette is [navy, red, orange, gold, cream](https://coolors.co/palette/003049-d62828-f77f00-fcbf49-eae2b7) and lives as tokens at the top of `src/styles.css` (light and dark). Use the tokens, never raw hex values in components.
+All colors are tokens in `src/styles.css`. Components use only the tokens, never raw hex values, so every screen works in every scheme.
+
+**Three color schemes**, each with a light and a dark version, chosen in Settings:
+
+| Scheme | Palette |
+|---|---|
+| `classic` (default) | [navy, red, orange, gold, cream](https://coolors.co/palette/003049-d62828-f77f00-fcbf49-eae2b7) |
+| `forest` | [greens](https://coolors.co/palette/132a13-31572c-4f772d-90a955-ecf39e) |
+| `contrast` | High contrast: black and white with a yellow accent; edges drawn in full, links underlined |
 
 | Token | Use |
 |---|---|
-| `leaf` (`#f77f00`) | The brand accent: the Clock in button, "you" marks, the header rule. Put `leaf-ink` (`#003049`) text on it, never white. |
-| `leaf-text` (`#d62828`) | Red for small emphasis on paper, such as "on the clock" |
-| `pine` (`#003049`) | Navy for primary buttons, selected tabs and the Clock out button; `foam` (`#eae2b7`) text goes on it |
-| `paper` (`#eae2b7`), `paper-2` (`#fcbf49`), `card`, `line`, `ink`, `muted` | Cream and gold surfaces, borders, and navy text |
+| `paper`, `paper-2`, `card` | Page, tinted surfaces (selected choices, notices), sections |
+| `ink`, `muted`, `line` | Text, quieter text, edges |
+| `pine` + `foam` | Dark buttons (Clock out, selected tabs) and the text on them |
+| `leaf` + `leaf-ink` | The brand accent (Clock in, header rule, selected menu item) and the text on it. Never white text on `leaf`. |
+| `leaf-text` | Small emphasis on paper, such as "On the clock" |
+| `bar` + `bar-ink` | The header and the sign-in band |
+
+To add a scheme: add its swatches to `SCHEME_SWATCHES` and its name to `SCHEMES` in `src/lib/appearance.ts`, add `scheme_<name>` and `scheme_<name>Note` text in both languages, and add three blocks to `styles.css` (light, dark when the device is dark, dark when chosen), copying the `forest` ones.
+
+**Display settings** (`src/lib/appearance.ts`, screen in `src/components/settings-panel.tsx`) are saved on the device in `localStorage` (`tc-appearance`), not on the account. They are applied as attributes on `<html>`:
+
+| Attribute | Values | Effect |
+|---|---|---|
+| `data-scheme` | `classic`, `forest`, `contrast` | Color scheme |
+| `data-mode` | `light`, `dark`, or absent | Absent follows the device |
+| `data-text` | `default`, `large` (112.5%), `xlarge` (125%) | Root font size, so text, spacing and buttons all scale |
+| `data-density` | `compact`, `comfortable`, `roomy` | Tailwind's `--spacing` (0.2 / 0.25 / 0.3 rem), which sizes padding, gaps and button heights |
+| `data-motion` | `reduce`, or absent | Stops animation even if the device allows it |
+
+`APPEARANCE_BOOT_SCRIPT` runs in `<head>` (see `src/routes/__root.tsx`) and applies the saved choice before the first paint, so there is no flash of the default colors, including on the sign-in screen. On phones the header shows one language switch button (`#lang-switch`) so the menu button keeps its label at large text sizes.
+
+Shared styles in `src/styles.css`:
+
+- `.panel` is every section of a page. Use `className="panel p-4 sm:p-6"` so edges line up.
+- `.ruled` on a `<ul>` rules its rows with dashed lines, like a paper time card (used for shifts).
+- `.live-dot` is the pulsing "on the clock" dot.
+- Headings use the display face in normal capitalization (`font-display text-[1.75rem] font-bold`). Capitals are kept for the wordmark and the Clock in / Clock out button only.
+- The Clock screen is one time card (`#timecard`): status and date, the clock face (`#clock-face`), the button, then today / this week / pay period, then the pay period dates and PTO days left.
 
 ### Platform scaffold (leave alone unless you know why)
 
@@ -164,11 +197,11 @@ The root element of the signed-in app carries the live state. Wait on these inst
 |---|---|
 | `data-status` | `booting`, `failed`, `ready`, `stale` |
 | `data-busy` | `true`, `false` |
-| `data-view` | `clock`, `timeoff`, `calendar`, `daysoff`, `team`, `invite`, `reports` (replaces the old `data-tab`) |
+| `data-view` | `clock`, `timeoff`, `settings`, `calendar`, `daysoff`, `team`, `invite`, `reports` (replaces the old `data-tab`) |
 | `data-role` | `admin`, `employee` |
 | `data-shift` | `in`, `out` |
 
-Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Menu links carry `data-nav="<section>"` (in `aside` on wide screens, in `#menu-drawer` after clicking `#menu-btn` on phones). Company days off: `#days-off` (rows carry `data-day-off="YYYY-MM-DD"`), `#add-day-off`, `#day-off-date`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|manual"`), `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
+Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Settings: each choice is a native radio inside `fieldset[data-setting="scheme|mode|text|density|motion|language"]`, plus `#reset-settings`. Menu links carry `data-nav="<section>"` (in `aside` on wide screens, in `#menu-drawer` after clicking `#menu-btn` on phones). Company days off: `#days-off` (rows carry `data-day-off="YYYY-MM-DD"`), `#add-day-off`, `#day-off-date`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|manual"`), `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
 
 ---
 
@@ -195,7 +228,7 @@ npm run lint
 Unit tests for the app code:
 
 ```
-node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/preview-path-prefix.test.ts src/lib/clock-machine.test.ts src/lib/federal-holidays.test.ts src/lib/pay-period.test.ts
+node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/preview-path-prefix.test.ts src/lib/clock-machine.test.ts src/lib/federal-holidays.test.ts src/lib/pay-period.test.ts src/lib/appearance.test.ts
 ```
 
 `npm test` runs the scaffold's script tests first. Outside a Grok Build workspace 17 of those fail because they read `.grok/` files that are not in this repository, and `npm test` then stops before it reaches the app tests. Use the command above to run the app tests on their own.
@@ -225,9 +258,8 @@ node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib
 
 ## 9. Test status
 
-- App unit tests: 77 of 77 pass (state machines including sections, federal holiday dates, pay periods and the report).
-- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-09: 88 of 88.
-  - Sections and menu: phone drawer (open, choose, Escape), wide-screen side menu, an employee sees only their 4 sections and is sent to Clock from `#reports`, a refresh stays on the same section.
-  - Company days off: federal switch adds the day to the list, a custom day is listed in date order, the clock notice, the employee view (no remove or add), removing a day, the next year's federal list.
-  - Pay periods, PTO days and reports; invitations, sign-in and password reset; clock in/out, time off, lost connection and sign-in errors.
+- App unit tests: 80 of 80 pass (state machines including sections, federal holiday dates, pay periods and the report, display settings including the boot script).
+- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-10: 109 of 109.
+  - Display settings: all three schemes in light and dark, text sizes, spacing, motion, language, arrow keys between choices, saved across a reload, applied before first paint, the sign-in screen, reset, and no sideways scrolling on any section at extra large text with roomy spacing on a phone.
+  - Sections and menu, Company days off, pay periods and reports, invitations, sign-in and password reset, clock in/out, time off, lost connection and sign-in errors.
 - Not tested: real email delivery, a deployed build on Neon, Google / X sign-in.
