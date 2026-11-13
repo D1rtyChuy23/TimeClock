@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { authClient, authEnabled } from "./client";
 
 /** Normalized user shape used across the app, auth on or off. */
@@ -32,6 +32,8 @@ export type CurrentUserState = {
   user: AppUser | null;
   /** True while the session is still resolving — don't treat `user: null` as signed out yet. */
   isPending: boolean;
+  /** The session check couldn't reach the server (no internet). `user: null` then is not "signed out". */
+  unreachable?: boolean;
 };
 
 const DEV_STATE: CurrentUserState = { user: DEV_USER, isPending: false };
@@ -64,7 +66,19 @@ export function useCurrentUserState(): CurrentUserState {
 }
 
 function useSessionUserState(): CurrentUserState {
-  const { data, isPending } = authClient.useSession();
+  const { data, isPending, error, refetch } = authClient.useSession();
+  const unreachable = !data && !!error;
+  // Offline: check again when the connection comes back, and every 30 seconds until then.
+  useEffect(() => {
+    if (!unreachable) return;
+    const again = () => void refetch();
+    window.addEventListener("online", again);
+    const id = window.setInterval(again, 30_000);
+    return () => {
+      window.removeEventListener("online", again);
+      window.clearInterval(id);
+    };
+  }, [unreachable, refetch]);
   const id = data?.user.id;
   const displayName = data?.user.name ?? null;
   const primaryEmail = data?.user.email ?? null;
@@ -73,7 +87,7 @@ function useSessionUserState(): CurrentUserState {
     () => (id ? { id, displayName, primaryEmail, profileImageUrl, isDevFallback: false } : null),
     [id, displayName, primaryEmail, profileImageUrl],
   );
-  return useMemo(() => ({ user, isPending }), [user, isPending]);
+  return useMemo(() => ({ user, isPending, unreachable }), [user, isPending, unreachable]);
 }
 
 /**

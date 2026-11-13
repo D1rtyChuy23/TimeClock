@@ -8,6 +8,7 @@ import {
   inviteState,
   viewFor,
   nextLoad,
+  queuedOutcome,
   ptoActions,
   shiftAction,
   type LoadStatus,
@@ -26,6 +27,22 @@ test("screen: a first-load failure and a later failure are different states", ()
   assert.equal(nextLoad("stale", "FAILED"), "stale");
   assert.equal(nextLoad("failed", "LOADED"), "ready");
   assert.equal(nextLoad("stale", "LOADED"), "ready");
+});
+
+test("screen: saved data opens the app offline instead of an error", () => {
+  assert.equal(nextLoad("booting", "RESTORED"), "stale");
+  assert.equal(nextLoad("failed", "RESTORED"), "stale");
+  assert.equal(nextLoad("ready", "RESTORED"), "ready", "fresh data is never replaced by saved data");
+  assert.equal(nextLoad("stale", "LOADED"), "ready");
+});
+
+test("offline punches: what happens to a queued punch for each answer", () => {
+  assert.equal(queuedOutcome({ ok: true }), "saved");
+  assert.equal(queuedOutcome({ ok: false, error: "already_in" }), "dropped");
+  assert.equal(queuedOutcome({ ok: false, error: "already_out" }), "dropped");
+  assert.equal(queuedOutcome({ ok: false, error: "overlap" }), "rejected");
+  assert.equal(queuedOutcome({ ok: false, error: "too_old" }), "rejected");
+  assert.equal(queuedOutcome({ ok: false, error: "error" }), "keep");
 });
 
 test("shift: the button offers the opposite of what the screen shows", () => {

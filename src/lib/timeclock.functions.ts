@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import {
   INVITE_DAYS,
+  OFFLINE_MAX_DAYS,
   PTO_NEXT,
   canPto,
   canSetRole,
@@ -29,7 +30,11 @@ export type Punch = {
   clockIn: string;
   clockOut: string | null;
   manual: boolean;
+  /** Tapped while the device was offline and sent later (offline.ts). */
+  late: boolean;
   createdBy: string | null;
+  /** Client only: still waiting on this device to be sent. */
+  pending?: boolean;
 };
 
 export type PtoRequest = {
@@ -96,6 +101,8 @@ const CODES = new Set([
   "not_open",
   "already_in",
   "already_out",
+  "overlap",
+  "too_old",
   "changed",
   "bad_email",
   "already_member",
@@ -163,6 +170,7 @@ function mapPunch(row: Record<string, unknown>): Punch {
     clockIn: iso(row.clock_in) ?? new Date(0).toISOString(),
     clockOut: iso(row.clock_out),
     manual: row.manual === true || row.manual === "t" || row.manual === "true",
+    late: row.late === true || row.late === "t" || row.late === "true",
     createdBy: row.created_by == null ? null : String(row.created_by),
   };
 }
@@ -218,7 +226,7 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
     : [me];
   const punchRows = admin
     ? await sql<Record<string, unknown>>`
-        select id, user_id, clock_in, clock_out, manual, created_by
+        select id, user_id, clock_in, clock_out, manual, late, created_by
         from punches
         where clock_in >= now() - interval '90 days'
            or clock_out is null
@@ -226,7 +234,7 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
         order by clock_in desc
       `
     : await sql<Record<string, unknown>>`
-        select id, user_id, clock_in, clock_out, manual, created_by
+        select id, user_id, clock_in, clock_out, manual, late, created_by
         from punches
         where user_id = ${userId}
           and (
@@ -333,13 +341,20 @@ export const togglePunch = createServerFn({ method: "POST" })
     const o = asRecord(raw);
     const target = typeof o.targetUserId === "string" ? o.targetUserId : "";
     const action = o.action === "in" || o.action === "out" ? o.action : "";
-    return { targetUserId: target, action };
+    // Set only for a punch that was tapped offline and is being sent now (offline.ts).
+    const at = typeof o.at === "string" ? o.at : "";
+    return { targetUserId: target, action, at };
   })
   .handler(async ({ context, data }): Promise<ClockResult> => {
     return run(context.userId, async (sql) => {
       const me = await ensureProfile(sql, context.userId);
       const target = data.targetUserId && data.targetUserId !== context.userId ? data.targetUserId : context.userId;
       if (target !== context.userId && me.role !== "admin") throw new Error("not_allowed");
+      if (data.at) {
+        if (target !== context.userId || !data.action) throw new Error("not_allowed");
+        await offlinePunch(sql, target, data.action === "in" ? "in" : "out", data.at);
+        return;
+      }
       // Shift machine (clock-machine.ts): the screen names the direction. With no
       // action (a page loaded before this change) it still flips, as it used to.
       if (data.action !== "in") {
@@ -361,6 +376,41 @@ export const togglePunch = createServerFn({ method: "POST" })
       if (opened.length === 0) throw new Error("already_in");
     });
   });
+
+/**
+ * A punch tapped offline, stamped with the time it was tapped. Checked the same way an
+ * admin's manual shift is, so a wrong device clock can't stamp the future or overlap
+ * another shift. Marked `late` either way.
+ */
+async function offlinePunch(sql: Sql, userId: string, action: "in" | "out", atText: string): Promise<void> {
+  const at = new Date(atText);
+  if (Number.isNaN(at.getTime())) throw new Error("bad_range");
+  if (at.getTime() > Date.now() + 120_000) throw new Error("future");
+  if (at.getTime() < Date.now() - OFFLINE_MAX_DAYS * 86_400_000) throw new Error("too_old");
+  const stamp = at.toISOString();
+  if (action === "in") {
+    const open = await sql`select id from punches where user_id = ${userId} and clock_out is null`;
+    if (open.length > 0) throw new Error("already_in");
+    const after = await sql`select id from punches where user_id = ${userId} and clock_out > ${stamp}`;
+    if (after.length > 0) throw new Error("overlap");
+    const opened = await sql`
+      insert into punches (user_id, clock_in, manual, late, created_by)
+      values (${userId}, ${stamp}, false, true, ${userId})
+      on conflict do nothing
+      returning id
+    `;
+    if (opened.length === 0) throw new Error("already_in");
+    return;
+  }
+  const closed = await sql`
+    update punches set clock_out = ${stamp}, late = true
+    where user_id = ${userId} and clock_out is null and clock_in < ${stamp}
+    returning id
+  `;
+  if (closed.length > 0) return;
+  const open = await sql`select id from punches where user_id = ${userId} and clock_out is null`;
+  throw new Error(open.length > 0 ? "bad_range" : "already_out");
+}
 
 export const forceOut = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
@@ -729,7 +779,7 @@ export const loadReport = createServerFn({ method: "POST" })
         from profiles order by lower(full_name), email
       `;
       const punches = await sql<Record<string, unknown>>`
-        select id, user_id, clock_in, clock_out, manual, created_by from punches
+        select id, user_id, clock_in, clock_out, manual, late, created_by from punches
         where clock_in < ${data.to} and (clock_out is null or clock_out > ${data.from})
         order by clock_in
       `;

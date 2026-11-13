@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import {
   CalendarDays,
   CalendarOff,
@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock as ClockIcon,
+  CloudOff,
   Menu,
   PenLine,
   SlidersHorizontal,
@@ -26,12 +27,22 @@ import {
   inviteState,
   nextLoad,
   ptoActions,
+  queuedOutcome,
   shiftAction,
   viewFor,
   type LoadStatus,
   type View,
 } from "@/lib/clock-machine";
 import { federalHolidays, federalOn } from "@/lib/federal-holidays";
+import {
+  isOffline,
+  readQueue,
+  readSnapshot,
+  saveSnapshot,
+  withQueued,
+  writeQueue,
+  type QueuedPunch,
+} from "@/lib/offline";
 import { english, errorCopyKey, useI18n, type CopyKey, type Lang } from "@/lib/i18n";
 import {
   PTO_DAY_HOURS,
@@ -140,18 +151,50 @@ type Act = (fn: () => Promise<ClockResult>, okKey: CopyKey) => Promise<boolean>;
 
 /** Screen machine (clock-machine.ts) plus the data it shows. `snap` is set once status has been `ready`. */
 type Screen = { status: LoadStatus; snap: Snapshot | null };
-type ScreenEvent = { type: "LOADED"; snap: Snapshot } | { type: "FAILED" };
+/** `saved`: the data this device kept from last time (offline.ts), used only if nothing is on screen yet. */
+type ScreenEvent = { type: "LOADED"; snap: Snapshot } | { type: "FAILED"; saved?: Snapshot };
 
 function screenReducer(screen: Screen, event: ScreenEvent): Screen {
+  if (event.type === "FAILED" && !screen.snap && event.saved) {
+    return { status: nextLoad(screen.status, "RESTORED"), snap: event.saved };
+  }
   return {
     status: nextLoad(screen.status, event.type),
     snap: event.type === "LOADED" ? event.snap : screen.snap,
   };
 }
 
-export function ClockApp() {
+/** How long a punch waits for the server before it is saved on the device instead. */
+const PUNCH_WAIT_MS = 8000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const id = window.setTimeout(() => reject(new TypeError("network timeout")), ms);
+    p.then(
+      (v) => {
+        window.clearTimeout(id);
+        resolve(v);
+      },
+      (e: unknown) => {
+        window.clearTimeout(id);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
+}
+
+export function ClockApp({ userId }: { userId: string }) {
   const { t, lang, setLang } = useI18n();
-  const [{ status, snap }, send] = useReducer(screenReducer, { status: "booting", snap: null });
+  const [{ status, snap: serverSnap }, send] = useReducer(screenReducer, { status: "booting", snap: null });
+  // Punches tapped with no internet, waiting on this device (offline.ts).
+  const [queue, setQueue] = useState<QueuedPunch[]>(() => readQueue(userId));
+  // What the screen shows: the server's data plus the queued punches, so the button and hours stay right offline.
+  const snap = useMemo(
+    () => (serverSnap && queue.length ? { ...serverSnap, punches: withQueued(serverSnap.punches, userId, queue) } : serverSnap),
+    [serverSnap, queue, userId],
+  );
+  // Server clock minus this device's clock, so a queued punch is stamped in server time.
+  const offset = useRef(0);
   const [view, setView] = useState<View>("clock");
   const [menuOpen, setMenuOpen] = useState(false);
   // Shared by Calendar and Time off: picking a day on the calendar fills in the request form.
@@ -165,16 +208,124 @@ export function ClockApp() {
   const latest = useRef(0);
   const now = useServerNow(snap?.serverNow);
 
-  const reload = useCallback(async () => {
-    if (saving.current) return;
-    const ticket = ++latest.current;
-    try {
-      const data = await loadClock();
-      if (ticket === latest.current) send({ type: "LOADED", snap: data });
-    } catch {
-      if (ticket === latest.current) send({ type: "FAILED" });
-    }
+  const flushRef = useRef<() => Promise<void>>(async () => {});
+  const loaded = useCallback((data: Snapshot) => {
+    offset.current = Date.parse(data.serverNow) - Date.now();
+    saveSnapshot(data, offset.current);
+    send({ type: "LOADED", snap: data });
   }, []);
+
+  const reload = useCallback(
+    async (opts?: { flush?: boolean }) => {
+      if (saving.current) return;
+      const ticket = ++latest.current;
+      try {
+        const data = await loadClock();
+        if (ticket !== latest.current) return;
+        loaded(data);
+        // Back online: send anything that was punched while it was down.
+        if (opts?.flush !== false) void flushRef.current();
+      } catch {
+        if (ticket !== latest.current) return;
+        const saved = readSnapshot(userId);
+        if (saved) offset.current = saved.offsetMs;
+        // Saved data opens with today's time, not the time it was saved.
+        const restored = saved ? { ...saved.snap, serverNow: new Date(Date.now() + saved.offsetMs).toISOString() } : undefined;
+        send({ type: "FAILED", saved: restored });
+      }
+    },
+    [loaded, userId],
+  );
+
+  /** Clock in or out. With no internet the punch is saved here and sent later. */
+  const punch = async (action: "in" | "out") => {
+    if (saving.current) return;
+    const enqueue = () => {
+      const item: QueuedPunch = {
+        id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        action,
+        at: new Date(Date.now() + offset.current).toISOString(),
+      };
+      const next = [...readQueue(userId), item];
+      writeQueue(userId, next);
+      setQueue(next);
+      toast.success(t("queuedToast"));
+    };
+    // Earlier punches are still waiting: this one waits behind them, so they arrive in order.
+    if (readQueue(userId).length > 0) {
+      enqueue();
+      void flushRef.current();
+      return;
+    }
+    saving.current = true;
+    setBusy(true);
+    const ticket = ++latest.current;
+    let ok = false;
+    try {
+      const res = await withTimeout(togglePunch({ data: { targetUserId: "", action } }), PUNCH_WAIT_MS);
+      if (res.ok) {
+        if (ticket === latest.current) loaded(res.data);
+        toast.success(t(action === "in" ? "clockedIn" : "clockedOut"));
+        ok = true;
+      } else {
+        toast.error(t(errorCopyKey(res.error)));
+      }
+    } catch (e) {
+      if (isOffline(e)) {
+        // If the slow request did get through after all, the queued copy is dropped as already_in/out.
+        enqueue();
+        ok = true;
+        send({ type: "FAILED" });
+      } else {
+        toast.error(t("errGeneric"));
+      }
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
+    if (!ok) void reload();
+  };
+
+  /** Send queued punches oldest first. Stops at the first one that can't get through. */
+  flushRef.current = async () => {
+    if (saving.current) return;
+    let pending = readQueue(userId);
+    if (pending.length === 0) {
+      if (queue.length) setQueue([]);
+      return;
+    }
+    saving.current = true;
+    setBusy(true);
+    let sent = 0;
+    try {
+      while (pending.length > 0) {
+        const item = pending[0];
+        let res: ClockResult;
+        try {
+          res = await withTimeout(
+            togglePunch({ data: { targetUserId: "", action: item.action, at: item.at } }),
+            PUNCH_WAIT_MS,
+          );
+        } catch {
+          break; // still offline, or signed out: try again later
+        }
+        const outcome = queuedOutcome(res);
+        if (outcome === "keep") break;
+        if (outcome === "saved") sent += 1;
+        if (outcome === "rejected") {
+          toast.error(t("queuedRejected", { time: fmtWhen(item.at, lang) }), { duration: 20_000 });
+        }
+        pending = pending.slice(1);
+        writeQueue(userId, pending);
+        setQueue(pending);
+      }
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
+    if (sent > 0) toast.success(t("queuedSent"));
+    void reload({ flush: false });
+  };
 
   useEffect(() => {
     try {
@@ -190,11 +341,21 @@ export function ClockApp() {
       if (document.visibilityState === "visible") void reload();
     };
     document.addEventListener("visibilitychange", onVis);
+    const onOnline = () => void reload();
+    window.addEventListener("online", onOnline);
     return () => {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("online", onOnline);
     };
   }, [reload]);
+
+  // While punches are waiting, check for the connection every 20 seconds.
+  useEffect(() => {
+    if (queue.length === 0) return;
+    const id = window.setInterval(() => void reload(), 20_000);
+    return () => window.clearInterval(id);
+  }, [queue.length, reload]);
 
   const act: Act = async (fn, okKey) => {
     if (saving.current) return false;
@@ -205,14 +366,14 @@ export function ClockApp() {
     try {
       const res = await fn();
       if (res.ok) {
-        if (ticket === latest.current) send({ type: "LOADED", snap: res.data });
+        if (ticket === latest.current) loaded(res.data);
         toast.success(t(okKey));
         ok = true;
       } else {
         toast.error(t(errorCopyKey(res.error)));
       }
-    } catch {
-      toast.error(t("errGeneric"));
+    } catch (e) {
+      toast.error(t(isOffline(e) ? "staleNotice" : "errGeneric"));
     } finally {
       saving.current = false;
       setBusy(false);
@@ -275,6 +436,7 @@ export function ClockApp() {
       data-view={view}
       data-role={snap?.me.role}
       data-shift={snap ? (onClock ? "in" : "out") : undefined}
+      data-queued={queue.length}
     >
       <header className="sticky top-0 z-20 border-b-4 border-leaf bg-bar text-bar-ink">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
@@ -357,7 +519,21 @@ export function ClockApp() {
               </button>
             </div>
           ) : null}
-          {status === "stale" ? (
+          {queue.length > 0 ? (
+            <div
+              id="queued-notice"
+              className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3 py-2"
+              role="status"
+            >
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <CloudOff className="size-4 shrink-0" aria-hidden="true" />
+                {queue.length === 1 ? t("queuedNotice1") : t("queuedNoticeN", { n: queue.length })}
+              </p>
+              <button type="button" className={ghost} disabled={busy} onClick={() => void reload()}>
+                {t("sendNow")}
+              </button>
+            </div>
+          ) : status === "stale" ? (
             <div
               className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3 py-2"
               role="status"
@@ -398,7 +574,7 @@ export function ClockApp() {
             ) : view === "reports" && admin ? (
               <ReportsPanel now={now} />
             ) : (
-              <Mine snap={snap} now={now} busy={busy} act={act} />
+              <Mine snap={snap} now={now} busy={busy} onPunch={(action) => void punch(action)} />
             )
           ) : null}
         </main>
@@ -555,12 +731,12 @@ function Mine({
   snap,
   now,
   busy,
-  act,
+  onPunch,
 }: {
   snap: Snapshot;
   now: Date;
   busy: boolean;
-  act: Act;
+  onPunch: (action: "in" | "out") => void;
 }) {
   const { t, lang } = useI18n();
   const mine = snap.punches.filter((p) => p.userId === snap.me.userId);
@@ -614,12 +790,7 @@ function Mine({
             type="button"
             disabled={busy}
             aria-busy={busy}
-            onClick={() =>
-              void act(
-                () => togglePunch({ data: { targetUserId: "", action: shiftAction(!!open) } }),
-                open ? "clockedOut" : "clockedIn",
-              )
-            }
+            onClick={() => onPunch(shiftAction(!!open))}
             className={
               "mt-5 flex min-h-28 w-full flex-col items-center justify-center rounded-2xl px-4 py-5 " +
               "shadow-[inset_0_-6px_0_rgb(0_0_0/0.18)] transition-transform active:translate-y-0.5 active:shadow-[inset_0_-2px_0_rgb(0_0_0/0.18)] disabled:opacity-60 " +
@@ -692,6 +863,12 @@ function ShiftRow({ punch, now, lang }: { punch: Punch; now: Date; lang: Lang })
           <p className="mt-1 flex items-center gap-1 text-xs text-muted">
             <PenLine className="size-3.5" aria-hidden="true" />
             {t("manual")}
+          </p>
+        ) : null}
+        {punch.pending || punch.late ? (
+          <p className="mt-1 flex items-center gap-1 text-xs text-muted" data-punch={punch.pending ? "pending" : "late"}>
+            <CloudOff className="size-3.5" aria-hidden="true" />
+            {punch.pending ? t("waitingToSend") : t("sentLate")}
           </p>
         ) : null}
       </div>
