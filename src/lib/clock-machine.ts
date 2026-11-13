@@ -148,3 +148,67 @@ export function viewFor(requested: string, admin: boolean): View {
   const view = (VIEWS as readonly string[]).includes(requested) ? (requested as View) : "clock";
   return ADMIN_VIEWS.has(view) && !admin ? "clock" : view;
 }
+
+// ---------------------------------------------------------------------------
+// 7. Sync: is this device in step with the server?
+//
+//    synced --load fails--> offline --load works--> synced
+//    synced/offline --punch with no connection--> waiting
+//    waiting --connection back--> sending --all sent--> synced
+//    sending --still no connection--> waiting
+//    sending --server reachable but said no (signed out, server error)--> blocked
+//    blocked --Send now / next try--> sending
+//
+//    One answer for the notice the person sees and for `data-sync`. Before this,
+//    it was spread over the screen status, the queue length and two flags, and a
+//    punch stuck for another reason was wrongly shown as "waiting for internet".
+// ---------------------------------------------------------------------------
+export type SyncState = "synced" | "offline" | "waiting" | "sending" | "blocked";
+
+export function syncState(input: {
+  status: LoadStatus;
+  /** Punches waiting on this device. */
+  queued: number;
+  /** The queue is being sent right now. */
+  sending: boolean;
+  /** The last try reached the server and it did not accept the punch. */
+  refused: boolean;
+}): SyncState {
+  if (input.queued > 0) return input.sending ? "sending" : input.refused ? "blocked" : "waiting";
+  return input.status === "stale" || input.status === "failed" ? "offline" : "synced";
+}
+
+// ---------------------------------------------------------------------------
+// 8. Session: who is using this device, and do we know?
+//
+//    pending --> signed_in | signed_out          (the server answered)
+//    pending --> offline_known                   (no answer; this device remembers who was signed in)
+//    pending --> offline_unknown                 (no answer; nobody remembered)
+//    offline_* --connection back--> signed_in | signed_out
+//
+//    offline_known opens the clock (punches queue up). offline_unknown shows
+//    "connect to sign in": the sign-in form cannot work without the server.
+// ---------------------------------------------------------------------------
+export type SessionState = "pending" | "signed_in" | "signed_out" | "offline_known" | "offline_unknown";
+
+export function sessionState(input: {
+  isPending: boolean;
+  /** The signed-in person's id, when the server confirmed one. */
+  userId: string | null;
+  /** The session check could not reach the server. */
+  unreachable: boolean;
+  /** Who was last signed in on this device (offline.ts). */
+  rememberedId: string | null;
+}): SessionState {
+  if (input.isPending) return "pending";
+  if (input.userId) return "signed_in";
+  if (!input.unreachable) return "signed_out";
+  return input.rememberedId ? "offline_known" : "offline_unknown";
+}
+
+/** Whose clock to open for a session state, if any. */
+export function sessionUserId(state: SessionState, userId: string | null, rememberedId: string | null): string | null {
+  if (state === "signed_in") return userId;
+  if (state === "offline_known") return rememberedId;
+  return null;
+}

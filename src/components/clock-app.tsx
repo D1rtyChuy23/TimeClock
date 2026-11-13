@@ -29,6 +29,7 @@ import {
   ptoActions,
   queuedOutcome,
   shiftAction,
+  syncState,
   viewFor,
   type LoadStatus,
   type View,
@@ -201,6 +202,9 @@ export function ClockApp({ userId }: { userId: string }) {
   const [ptoDay, setPtoDay] = useState(() => dateInput(new Date()));
   const [focusDay, setFocusDay] = useState(() => dateInput(new Date()));
   const [busy, setBusy] = useState(false);
+  // Sync machine inputs (clock-machine.ts): the queue is being sent / the server answered but refused it.
+  const [sending, setSending] = useState(false);
+  const [refused, setRefused] = useState(false);
   // Refs, because two taps can land before React re-renders with `busy` set.
   const saving = useRef(false);
   // Bumped by every load and save: an answer that is no longer the newest request is dropped,
@@ -249,6 +253,7 @@ export function ClockApp({ userId }: { userId: string }) {
       const next = [...readQueue(userId), item];
       writeQueue(userId, next);
       setQueue(next);
+      setRefused(false);
       toast.success(t("queuedToast"));
     };
     // Earlier punches are still waiting: this one waits behind them, so they arrive in order.
@@ -296,7 +301,10 @@ export function ClockApp({ userId }: { userId: string }) {
     }
     saving.current = true;
     setBusy(true);
+    setSending(true);
     let sent = 0;
+    // True when the server was reached and did not take the punch (signed out, server error): not "no internet".
+    let refusedNow = false;
     try {
       while (pending.length > 0) {
         const item = pending[0];
@@ -306,11 +314,15 @@ export function ClockApp({ userId }: { userId: string }) {
             togglePunch({ data: { targetUserId: "", action: item.action, at: item.at } }),
             PUNCH_WAIT_MS,
           );
-        } catch {
+        } catch (e) {
+          refusedNow = !isOffline(e);
           break; // still offline, or signed out: try again later
         }
         const outcome = queuedOutcome(res);
-        if (outcome === "keep") break;
+        if (outcome === "keep") {
+          refusedNow = true;
+          break;
+        }
         if (outcome === "saved") sent += 1;
         if (outcome === "rejected") {
           toast.error(t("queuedRejected", { time: fmtWhen(item.at, lang) }), { duration: 20_000 });
@@ -322,6 +334,8 @@ export function ClockApp({ userId }: { userId: string }) {
     } finally {
       saving.current = false;
       setBusy(false);
+      setSending(false);
+      setRefused(refusedNow);
     }
     if (sent > 0) toast.success(t("queuedSent"));
     void reload({ flush: false });
@@ -400,6 +414,7 @@ export function ClockApp({ userId }: { userId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
+  const sync = syncState({ status, queued: queue.length, sending, refused });
   const onClock = snap ? snap.punches.some((p) => p.userId === snap.me.userId && !p.clockOut) : false;
   const admin = snap?.me.role === "admin";
 
@@ -437,6 +452,7 @@ export function ClockApp({ userId }: { userId: string }) {
       data-role={snap?.me.role}
       data-shift={snap ? (onClock ? "in" : "out") : undefined}
       data-queued={queue.length}
+      data-sync={sync}
     >
       <header className="sticky top-0 z-20 border-b-4 border-leaf bg-bar text-bar-ink">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
@@ -519,21 +535,32 @@ export function ClockApp({ userId }: { userId: string }) {
               </button>
             </div>
           ) : null}
-          {queue.length > 0 ? (
+          {/* One notice, chosen by the sync machine (clock-machine.ts). */}
+          {sync === "waiting" || sync === "sending" || sync === "blocked" ? (
             <div
               id="queued-notice"
               className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3 py-2"
               role="status"
             >
-              <p className="flex items-center gap-2 text-sm font-medium">
-                <CloudOff className="size-4 shrink-0" aria-hidden="true" />
-                {queue.length === 1 ? t("queuedNotice1") : t("queuedNoticeN", { n: queue.length })}
+              <p className="flex min-w-0 flex-1 items-start gap-2 text-sm font-medium">
+                <CloudOff className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                {sync === "sending"
+                  ? t("sendingNotice")
+                  : sync === "blocked"
+                    ? queue.length === 1
+                      ? t("blockedNotice1")
+                      : t("blockedNoticeN", { n: queue.length })
+                    : queue.length === 1
+                      ? t("queuedNotice1")
+                      : t("queuedNoticeN", { n: queue.length })}
               </p>
-              <button type="button" className={ghost} disabled={busy} onClick={() => void reload()}>
-                {t("sendNow")}
-              </button>
+              {sync === "sending" ? null : (
+                <button type="button" className={ghost} disabled={busy} onClick={() => void reload()}>
+                  {t("sendNow")}
+                </button>
+              )}
             </div>
-          ) : status === "stale" ? (
+          ) : sync === "offline" && snap ? (
             <div
               className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3 py-2"
               role="status"
