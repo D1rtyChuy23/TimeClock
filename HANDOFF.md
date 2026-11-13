@@ -40,6 +40,8 @@ A time clock for a small team (about 9 people: 3 admins, 6 employees). It must s
 
 The first account ever created becomes the admin.
 
+**Works without internet.** If the connection drops, Clock in / Clock out still work: the punch is saved on the device with the time it was tapped, a notice says it is waiting, and it is sent automatically when the connection comes back (or on **Send now**). The app also opens with no internet on a device that has used it before, showing the last data it had. Punches sent this way are marked "Punched offline" and listed under missed punches in Reports so an admin can check the time. See **Offline punches** in section 4.
+
 ---
 
 ## 2. Stack and layout
@@ -66,6 +68,9 @@ The first account ever created becomes the admin.
 | `src/lib/auth/reset-password.server.ts` | Password-reset options handed to Better Auth |
 | `migrations/0002_timeclock.sql` | Tables: `profiles`, `punches`, `pto_requests`, `holidays` |
 | `migrations/0003_invites.sql` | Table: `invites` |
+| `migrations/0004_offline_punches.sql` | `punches.late`: the punch was tapped offline and sent later |
+| `src/lib/offline.ts` | **Offline support on the device**: the punch queue, the last good data, the last signed-in person (all `localStorage`). Pure helpers, tested in `offline.test.ts` |
+| `public/sw.js` | Service worker: keeps a copy of the page and its files so the app opens offline. Network first; never caches `/api/` or server functions. Installed by `OfflineSupport` in `__root.tsx`, built app only |
 | `src/routes/index.tsx`, `login.tsx` | Booting / signed out / signed in gate |
 | `src/routes/reset-password.tsx` | Where the link in a reset email lands |
 
@@ -159,7 +164,8 @@ The rules live in **`src/lib/clock-machine.ts`**. The server functions use them 
 
 | Machine | States and moves | Where it is enforced |
 |---|---|---|
-| **Screen** | `booting` → `ready` or `failed`; `ready` → `stale` when a refresh fails; any → `ready` on a good load | `LOAD` table + `screenReducer` in `clock-app.tsx` |
+| **Screen** | `booting` → `ready` or `failed`; `booting`/`failed` → `stale` on `RESTORED` (first load failed but this device saved data from last time); `ready` → `stale` when a refresh fails; any → `ready` on a good load | `LOAD` table + `screenReducer` in `clock-app.tsx` |
+| **Queued punch** (offline) | `queued` → sent (`late`); `already_in`/`already_out` → dropped; `overlap`/`too_old`/`bad_range`/`future` → dropped with a warning; no connection or signed out → stays queued | `queuedOutcome()`; `punch()` and `flushRef` in `clock-app.tsx`; `offlinePunch()` on the server |
 | **Shift** (per person) | `out` → `in` → `out` | `togglePunch` with an explicit `action`; the `one_open_punch` unique index |
 | **Time-off request** | `pending` → `approved` / `denied` (admin); `approved` / `denied` → `pending` (admin, "Undo"); cancel = delete (owner while pending, or approved until the day passes; admin any time) | `ptoActions()` used by `decidePto`, `cancelPto` and the buttons |
 | **Role** | `employee` ⇄ `admin`, never zero admins, first profile is admin | `canSetRole()` in `setRole`; `ensureProfile()` |
@@ -175,6 +181,8 @@ stateDiagram-v2
   [*] --> booting
   booting --> ready: LOADED
   booting --> failed: FAILED
+  booting --> stale: RESTORED
+  failed --> stale: RESTORED
   failed --> ready: LOADED
   ready --> stale: FAILED
   stale --> ready: LOADED
@@ -190,6 +198,8 @@ Things worth knowing:
 - **An invitation link only works for the address it was sent to.** The token rides in `sessionStorage` (`tc-invite`) from the link to the first load after sign-up, where `acceptInvite` checks it against the signed-in email and applies the role. Signing up is still open to anyone with the app's address; they join as an employee and see only their own data.
 - **Password reset** is Better Auth's own flow (one-hour, single-use token). The form answers the same way whether or not the address has an account. Saving a new password ends other sessions; a device already signed in notices within about five minutes.
 - **Federal holidays are computed, not stored.** Only the admin's "off" decision is saved, under the holiday's English name; the screen shows it translated.
+- **Offline punches.** `punch()` tries the server for up to 8 seconds; if it can't reach it, the tap goes into the queue (`tc-queue:<userId>` in `localStorage`) stamped with the device time corrected by the last known server-clock gap. While anything is queued, new taps queue behind it so they arrive in order. The queue is sent oldest first after every good load, on the browser's `online` event, every 20 seconds while waiting, and on **Send now**. The server (`offlinePunch`) accepts a time no more than 2 minutes ahead and no more than `OFFLINE_MAX_DAYS` (7) back, refuses a clock-in that overlaps a finished shift, and sets `late = true`. A punch that already happened (`already_in`/`already_out`) is dropped silently; this is also why a slow request that both timed out and got through is harmless. The screen shows server data plus the queue (`withQueued()`), so the button, elapsed time and hours stay right offline. The pay report flags `late` shifts as `data-missed="late"`.
+- **Opening offline.** Every good load is saved (`tc-last-snapshot`) and so is the signed-in person (`tc-last-user`). If the session check can't reach the server (`unreachable` from `useCurrentUserState`), `index.tsx` opens the clock for the remembered person, and the first failed load opens on the saved data as `stale`. Signing out clears both; queued punches are kept and sent the next time that person signs in on the device. Nothing saved on the device is trusted by the server.
 - **Confirm-before-delete** states are small local `id | null` values in the component that owns the list (`confirmId`, `confirmHoliday`, `confirmPto`, `confirm`). They are deliberately not in the shared module.
 
 ### Reading state from outside (tests, agents, debugging)
@@ -203,8 +213,9 @@ The root element of the signed-in app carries the live state. Wait on these inst
 | `data-view` | `clock`, `timeoff`, `settings`, `calendar`, `daysoff`, `team`, `invite`, `reports` (replaces the old `data-tab`) |
 | `data-role` | `admin`, `employee` |
 | `data-shift` | `in`, `out` |
+| `data-queued` | Number of punches waiting on this device (`0` when none) |
 
-Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Settings: each choice is a native radio inside `fieldset[data-setting="scheme|mode|text|density|motion|language"]`, plus `#reset-settings`. Menu links carry `data-nav="<section>"` (in `aside` on wide screens, in `#menu-drawer` after clicking `#menu-btn` on phones). Company days off: `#days-off` (rows carry `data-day-off="YYYY-MM-DD"`), `#add-day-off`, `#day-off-date`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|manual"`), `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
+Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Settings: each choice is a native radio inside `fieldset[data-setting="scheme|mode|text|density|motion|language"]`, plus `#reset-settings`. Menu links carry `data-nav="<section>"` (in `aside` on wide screens, in `#menu-drawer` after clicking `#menu-btn` on phones). Company days off: `#days-off` (rows carry `data-day-off="YYYY-MM-DD"`), `#add-day-off`, `#day-off-date`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|late|manual"`), `#queued-notice` (with its **Send now** button), shift rows' `[data-punch="pending|late"]`, `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
 
 ---
 
@@ -215,7 +226,7 @@ Every function runs behind `authMiddleware`, takes the caller's id from the sess
 - Writes return `{ ok: true, data: Snapshot }` or `{ ok: false, error: code }`. Add new codes to `CODES` **and** to `ERROR_KEYS` in `i18n.tsx`, with text in both languages.
 - `signInInfo` is the one function without sign-in: it tells the sign-in screen whether email works and which address an invitation link is for.
 - `loadClock` returns the `Snapshot` (admins also get `invites`; everyone gets `emailReady`): employees get only their own profile, shifts and requests; admins get everyone's. `offDays` (approved time off, no notes) and `holidays` go to everyone.
-- Clock in/out uses the database clock (`now()`), so a wrong phone clock cannot change a punch.
+- Clock in/out uses the database clock (`now()`), so a wrong phone clock cannot change a punch. The one exception is a punch sent late from the offline queue (`at` is set): it uses the tap time, checked by `offlinePunch()` and marked `late` for review.
 
 ---
 
@@ -231,7 +242,7 @@ npm run lint
 Unit tests for the app code:
 
 ```
-node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/preview-path-prefix.test.ts src/lib/clock-machine.test.ts src/lib/federal-holidays.test.ts src/lib/pay-period.test.ts src/lib/appearance.test.ts
+node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/preview-path-prefix.test.ts src/lib/clock-machine.test.ts src/lib/federal-holidays.test.ts src/lib/pay-period.test.ts src/lib/appearance.test.ts src/lib/offline.test.ts
 ```
 
 `npm test` runs the scaffold's script tests first. Outside a Grok Build workspace 17 of those fail because they read `.grok/` files that are not in this repository, and `npm test` then stops before it reaches the app tests. Use the command above to run the app tests on their own.
@@ -244,7 +255,8 @@ node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib
 - **Every user-facing string goes in `en` and `es`** in `i18n.tsx`. The `es` table is typed against `en`, so a missing translation fails `npm run typecheck`.
 - **Change flows in `clock-machine.ts`**, add a case to `clock-machine.test.ts`, and let the server and the screen both read the rule from there. Do not re-implement a rule in a component.
 - Never trust the client for who someone is or what role they hold.
-- Keep clock in/out on the database clock, and keep sending `action`.
+- Keep clock in/out on the database clock, and keep sending `action`. Only offline-queued punches carry a time, and they are always marked `late`.
+- After changing `public/sw.js`, bump `CACHE` in it so old copies are dropped.
 
 ## 8. Known gaps
 
@@ -258,11 +270,14 @@ node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib
 - No CSV or payroll export, no overtime rules, no pay periods other than Monday–Sunday weeks.
 - Two people signing up at the same instant as the very first accounts could both become admin. The Team tab can fix it.
 - Missed shifts added by an admin are not checked for overlap with existing shifts.
+- Offline, only Clock in / Clock out work. Time off, Team, Reports and other saves need the internet and say so.
+- An offline punch is stamped with the device's clock, corrected by the gap seen at the last good load. A device clock changed while offline would shift it, which is why these punches are flagged for review.
+- The app opens offline only on a device that has opened it online at least once since this change, and only on the main page (sign-in and password reset need the internet).
 
 ## 9. Test status
 
-- App unit tests: 80 of 80 pass (state machines including sections, federal holiday dates, pay periods and the report, display settings including the boot script).
-- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-10: 109 of 109.
+- App unit tests: 88 of 88 pass, including the offline queue and the RESTORED screen move (state machines including sections, federal holiday dates, pay periods and the report, display settings including the boot script).
+- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-10: 109 of 109. On 2026-11-13, with offline support: 126 of 126 against `npm run dev`, plus the 18-check offline suite against the built app (`vite build` + `vite preview`), which covers a reload with no internet through the service worker.
   - Display settings: all three schemes in light and dark, text sizes, spacing, motion, language, arrow keys between choices, saved across a reload, applied before first paint, the sign-in screen, reset, and no sideways scrolling on any section at extra large text with roomy spacing on a phone.
   - Sections and menu, Company days off, pay periods and reports, invitations, sign-in and password reset, clock in/out, time off, lost connection and sign-in errors.
 - Not tested: real email delivery, a deployed build on Neon, Google / X sign-in.

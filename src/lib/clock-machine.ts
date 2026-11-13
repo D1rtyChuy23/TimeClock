@@ -12,18 +12,21 @@
 //
 //    booting --LOADED--> ready <--LOADED-- stale
 //    booting --FAILED--> failed            ready --FAILED--> stale
+//    booting/failed --RESTORED--> stale
 //
-//    failed: nothing to show yet, full "couldn't load" card with a retry.
-//    stale:  the last good data stays on screen under a "no connection" notice.
+//    failed:   nothing to show yet, full "couldn't load" card with a retry.
+//    stale:    the last good data stays on screen under a "no connection" notice.
+//    RESTORED: the first load failed, but this device saved the last good data
+//              (offline.ts), so the app opens on that instead of an error.
 // ---------------------------------------------------------------------------
 export type LoadStatus = "booting" | "failed" | "ready" | "stale";
-export type LoadEvent = "LOADED" | "FAILED";
+export type LoadEvent = "LOADED" | "FAILED" | "RESTORED";
 
 export const LOAD: Record<LoadStatus, Record<LoadEvent, LoadStatus>> = {
-  booting: { LOADED: "ready", FAILED: "failed" },
-  failed: { LOADED: "ready", FAILED: "failed" },
-  ready: { LOADED: "ready", FAILED: "stale" },
-  stale: { LOADED: "ready", FAILED: "stale" },
+  booting: { LOADED: "ready", FAILED: "failed", RESTORED: "stale" },
+  failed: { LOADED: "ready", FAILED: "failed", RESTORED: "stale" },
+  ready: { LOADED: "ready", FAILED: "stale", RESTORED: "ready" },
+  stale: { LOADED: "ready", FAILED: "stale", RESTORED: "stale" },
 };
 
 export function nextLoad(status: LoadStatus, event: LoadEvent): LoadStatus {
@@ -42,6 +45,26 @@ export type ShiftAction = "in" | "out";
 /** The move the big button offers for the shift state the screen is showing. */
 export function shiftAction(onClock: boolean): ShiftAction {
   return onClock ? "out" : "in";
+}
+
+/**
+ * Offline punches (offline.ts) wait on the device and are sent in order when the
+ * connection is back. The server stamps them with the time they were tapped and
+ * marks them `late`, so the pay report lists them for an admin to check.
+ *
+ *    queued --sent--> saved (late)
+ *    queued --already_in / already_out--> dropped   (it already happened, e.g. on another device)
+ *    queued --overlap / too_old / bad_range / future--> dropped with a warning (an admin fixes it)
+ *    queued --no connection / signed out--> stays queued
+ */
+export const OFFLINE_MAX_DAYS = 7;
+export type QueuedOutcome = "saved" | "dropped" | "rejected" | "keep";
+
+export function queuedOutcome(result: { ok: true } | { ok: false; error: string }): QueuedOutcome {
+  if (result.ok) return "saved";
+  if (result.error === "already_in" || result.error === "already_out") return "dropped";
+  if (["overlap", "too_old", "bad_range", "future", "not_allowed"].includes(result.error)) return "rejected";
+  return "keep";
 }
 
 // ---------------------------------------------------------------------------

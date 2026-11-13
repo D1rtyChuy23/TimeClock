@@ -1,4 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
@@ -43,6 +44,7 @@ export const Route = createRootRoute({
       </head>
       <body>
         <PreviewHostBridge />
+        <OfflineSupport />
         <LanguageProvider>
           <AuthProvider>
             <Outlet />
@@ -54,3 +56,21 @@ export const Route = createRootRoute({
     </html>
   ),
 });
+
+/** Installs public/sw.js in the built app, so the clock opens and punches can be saved with no internet. */
+function OfflineSupport() {
+  useEffect(() => {
+    if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then(() => navigator.serviceWorker.ready)
+      .then((reg) => {
+        const urls = [window.location.pathname, ...performance.getEntriesByType("resource").map((e) => e.name)];
+        reg.active?.postMessage({ type: "cache-urls", urls });
+      })
+      .catch(() => {
+        /* offline support is optional: the app works without it */
+      });
+  }, []);
+  return null;
+}
