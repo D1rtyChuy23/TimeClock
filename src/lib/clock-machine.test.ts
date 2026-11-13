@@ -9,6 +9,9 @@ import {
   viewFor,
   nextLoad,
   queuedOutcome,
+  sessionState,
+  sessionUserId,
+  syncState,
   ptoActions,
   shiftAction,
   type LoadStatus,
@@ -97,4 +100,31 @@ test("section: unknown and admin-only sections fall back to the clock", () => {
   assert.equal(viewFor("settings", false), "settings");
   assert.equal(viewFor("", true), "clock");
   assert.equal(viewFor("preferences", true), "clock");
+});
+
+test("sync: one answer from the screen status, the queue and the last try", () => {
+  const base = { status: "ready" as LoadStatus, queued: 0, sending: false, refused: false };
+  assert.equal(syncState(base), "synced");
+  assert.equal(syncState({ ...base, status: "booting" }), "synced");
+  assert.equal(syncState({ ...base, status: "stale" }), "offline");
+  assert.equal(syncState({ ...base, status: "failed" }), "offline");
+  assert.equal(syncState({ ...base, status: "stale", queued: 2 }), "waiting");
+  assert.equal(syncState({ ...base, queued: 2, sending: true }), "sending");
+  assert.equal(syncState({ ...base, queued: 1, refused: true }), "blocked");
+  assert.equal(syncState({ ...base, queued: 1, sending: true, refused: true }), "sending", "a new try replaces the old refusal");
+  assert.equal(syncState({ ...base, refused: true }), "synced", "nothing queued means nothing is blocked");
+});
+
+test("session: offline is not the same as signed out", () => {
+  const base = { isPending: false, userId: null, unreachable: false, rememberedId: null };
+  assert.equal(sessionState({ ...base, isPending: true, userId: "u" }), "pending");
+  assert.equal(sessionState({ ...base, userId: "u" }), "signed_in");
+  assert.equal(sessionState(base), "signed_out");
+  assert.equal(sessionState({ ...base, rememberedId: "u" }), "signed_out", "the server said signed out: remembering does not override it");
+  assert.equal(sessionState({ ...base, unreachable: true, rememberedId: "u" }), "offline_known");
+  assert.equal(sessionState({ ...base, unreachable: true }), "offline_unknown");
+  assert.equal(sessionUserId("signed_in", "u", "old"), "u");
+  assert.equal(sessionUserId("offline_known", null, "u"), "u");
+  assert.equal(sessionUserId("offline_unknown", null, null), null);
+  assert.equal(sessionUserId("signed_out", null, "u"), null);
 });

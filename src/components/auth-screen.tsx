@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { GROK_PROVIDERS, authClient, signIn } from "@/lib/auth/client";
 import { authErrorCopyKey, useI18n } from "@/lib/i18n";
+import { isOffline } from "@/lib/offline";
 import { signInInfo } from "@/lib/timeclock.functions";
 
 /** Where an invitation token waits between opening the link and finishing sign-up. */
@@ -96,6 +97,26 @@ function PasswordField({
   );
 }
 
+/** Session machine `offline_unknown` (clock-machine.ts): no internet and nobody remembered on this device. */
+export function OfflineScreen() {
+  const { t } = useI18n();
+  return (
+    <Shell>
+      <div className="panel p-4 sm:p-5" id="offline-signin" role="status">
+        <h1 className="font-display text-[1.75rem] font-bold leading-tight">{t("offlineSignInTitle")}</h1>
+        <p className="mt-2 text-pretty text-ink">{t("offlineSignInLead")}</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="mt-4 inline-flex h-12 items-center justify-center rounded-lg bg-pine px-4 text-base font-semibold text-foam"
+        >
+          {t("retry")}
+        </button>
+      </div>
+    </Shell>
+  );
+}
+
 export function AuthScreen() {
   const { t } = useI18n();
   const router = useRouter();
@@ -164,13 +185,14 @@ export function AuthScreen() {
           : await authClient.signIn.email({ email: email.trim(), password, callbackURL: "/" });
       if (result.error) {
         const key = authErrorCopyKey(result.error.code);
-        setError(key ? t(key) : result.error.message || t("errGeneric"));
+        // No status means the request never reached the server.
+        setError(key ? t(key) : !result.error.status ? t("errOffline") : result.error.message || t("errGeneric"));
         return;
       }
       await authClient.getSession();
       if (router.state.location.pathname !== "/") await router.navigate({ to: "/" });
-    } catch {
-      setError(t("errGeneric"));
+    } catch (e) {
+      setError(t(isOffline(e) ? "errOffline" : "errGeneric"));
     } finally {
       setBusy(false);
     }

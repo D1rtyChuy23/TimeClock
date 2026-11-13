@@ -173,7 +173,8 @@ The rules live in **`src/lib/clock-machine.ts`**. The server functions use them 
 | **Federal holiday** | `open` ⇄ `off` (admin switch). Off is an ordinary `holidays` row, so the banner, calendar and delete all treat it like any closure | `addHoliday` / `deleteHoliday` |
 | **Section** | one of `VIEWS`; admin-only ones (`team`, `invite`, `reports`) fall back to `clock` for employees, including when typed into the address | `viewFor()`; `go()` in `clock-app.tsx` |
 | **Sign-in form** | `in` ⇄ `up`; `in` → `forgot` → `sent`; an invitation link opens on `up` with the email locked | `Mode` in `auth-screen.tsx` |
-| **Session** | `pending` → `signed_in` / `signed_out` | `src/lib/auth/sign-in-gate.ts`, `src/routes/index.tsx` |
+| **Session** | `pending` → `signed_in` / `signed_out` when the server answers; `pending` → `offline_known` (no answer, this device remembers who was signed in: the clock opens) or `offline_unknown` (no answer, nobody remembered: "connect to sign in", no form); `offline_*` → `signed_in` / `signed_out` when the connection is back | `sessionState()` + `sessionUserId()`, used by `src/routes/index.tsx` |
+| **Sync** | `synced` ⇄ `offline` (a load fails / works); → `waiting` (a punch is queued, no connection) → `sending` → `synced`; `sending` → `blocked` when the server was reached but did not take the punch (signed out, server error) | `syncState()`; it alone picks the notice in `clock-app.tsx` |
 | **Saving** | idle ⇄ saving, one save at a time | `act()` in `clock-app.tsx` |
 
 ```mermaid
@@ -200,6 +201,8 @@ Things worth knowing:
 - **Federal holidays are computed, not stored.** Only the admin's "off" decision is saved, under the holiday's English name; the screen shows it translated.
 - **Offline punches.** `punch()` tries the server for up to 8 seconds; if it can't reach it, the tap goes into the queue (`tc-queue:<userId>` in `localStorage`) stamped with the device time corrected by the last known server-clock gap. While anything is queued, new taps queue behind it so they arrive in order. The queue is sent oldest first after every good load, on the browser's `online` event, every 20 seconds while waiting, and on **Send now**. The server (`offlinePunch`) accepts a time no more than 2 minutes ahead and no more than `OFFLINE_MAX_DAYS` (7) back, refuses a clock-in that overlaps a finished shift, and sets `late = true`. A punch that already happened (`already_in`/`already_out`) is dropped silently; this is also why a slow request that both timed out and got through is harmless. The screen shows server data plus the queue (`withQueued()`), so the button, elapsed time and hours stay right offline. The pay report flags `late` shifts as `data-missed="late"`.
 - **Opening offline.** Every good load is saved (`tc-last-snapshot`) and so is the signed-in person (`tc-last-user`). If the session check can't reach the server (`unreachable` from `useCurrentUserState`), `index.tsx` opens the clock for the remembered person, and the first failed load opens on the saved data as `stale`. Signing out clears both; queued punches are kept and sent the next time that person signs in on the device. Nothing saved on the device is trusted by the server.
+- **`waiting` and `blocked` are different.** `waiting` means no connection: the notice says so and the app retries by itself. `blocked` means the server answered but did not take the punch, usually an expired sign-in: the notice says to tap Send now or sign in again, and does not blame the internet. Derive what to show from `syncState()`; do not test `status`, the queue length or flags separately in a component.
+- **Offline is not signed out.** A failed session check never shows the sign-in form: the form cannot work without the server. Use `sessionState()`; do not branch on `user === null` alone.
 - **Confirm-before-delete** states are small local `id | null` values in the component that owns the list (`confirmId`, `confirmHoliday`, `confirmPto`, `confirm`). They are deliberately not in the shared module.
 
 ### Reading state from outside (tests, agents, debugging)
@@ -214,6 +217,9 @@ The root element of the signed-in app carries the live state. Wait on these inst
 | `data-role` | `admin`, `employee` |
 | `data-shift` | `in`, `out` |
 | `data-queued` | Number of punches waiting on this device (`0` when none) |
+| `data-sync` | `synced`, `offline`, `waiting`, `sending`, `blocked` |
+
+The `<html>` element carries `data-session`: `pending`, `signed_in`, `signed_out`, `offline_known`, `offline_unknown`. The offline sign-in card is `#offline-signin`.
 
 Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Settings: each choice is a native radio inside `fieldset[data-setting="scheme|mode|text|density|motion|language"]`, plus `#reset-settings`. Menu links carry `data-nav="<section>"` (in `aside` on wide screens, in `#menu-drawer` after clicking `#menu-btn` on phones). Company days off: `#days-off` (rows carry `data-day-off="YYYY-MM-DD"`), `#add-day-off`, `#day-off-date`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|late|manual"`), `#queued-notice` (with its **Send now** button), shift rows' `[data-punch="pending|late"]`, `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
 
@@ -276,8 +282,8 @@ node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib
 
 ## 9. Test status
 
-- App unit tests: 88 of 88 pass, including the offline queue and the RESTORED screen move (state machines including sections, federal holiday dates, pay periods and the report, display settings including the boot script).
-- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-10: 109 of 109. On 2026-11-13, with offline support: 126 of 126 against `npm run dev`, plus the 18-check offline suite against the built app (`vite build` + `vite preview`), which covers a reload with no internet through the service worker.
+- App unit tests: 90 of 90 pass, including the offline queue, the RESTORED screen move, and the sync and session machines (state machines including sections, federal holiday dates, pay periods and the report, display settings including the boot script).
+- End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-10: 109 of 109. On 2026-11-13, with offline support: 135 of 135 against `npm run dev`, plus the 27-check offline suite against the built app (`vite build` + `vite preview`), which covers a reload with no internet through the service worker.
   - Display settings: all three schemes in light and dark, text sizes, spacing, motion, language, arrow keys between choices, saved across a reload, applied before first paint, the sign-in screen, reset, and no sideways scrolling on any section at extra large text with roomy spacing on a phone.
   - Sections and menu, Company days off, pay periods and reports, invitations, sign-in and password reset, clock in/out, time off, lost connection and sign-in errors.
 - Not tested: real email delivery, a deployed build on Neon, Google / X sign-in.
