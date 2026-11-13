@@ -609,35 +609,36 @@ type I18nValue = {
 
 const I18nContext = createContext<I18nValue | null>(null);
 
+/**
+ * English unless this person picked Spanish (ES button or Settings). Only a real
+ * choice is saved, under `tc-language`. The old `tc-lang` key also held guesses from
+ * the device language, so it is ignored and cleared: everyone starts in English once.
+ */
+const LANG_KEY = "tc-language";
+
 function readLang(): Lang {
   try {
-    const saved = localStorage.getItem("tc-lang");
-    if (saved === "en" || saved === "es") return saved;
-    return navigator.language.toLowerCase().startsWith("es") ? "es" : "en";
+    localStorage.removeItem("tc-lang");
+    return localStorage.getItem(LANG_KEY) === "es" ? "es" : "en";
   } catch {
-    return "es";
+    return "en";
   }
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>("es");
+  const [lang, setLangState] = useState<Lang>("en");
 
   useEffect(() => {
     const next = readLang();
     setLangState(next);
     document.documentElement.lang = next;
-    try {
-      localStorage.setItem("tc-lang", next);
-    } catch {
-      /* ignore */
-    }
   }, []);
 
   const setLang = useCallback((next: Lang) => {
     setLangState(next);
     document.documentElement.lang = next;
     try {
-      localStorage.setItem("tc-lang", next);
+      localStorage.setItem(LANG_KEY, next);
     } catch {
       /* ignore */
     }

@@ -10,6 +10,8 @@ Read this before changing anything. It describes the app as it is on this branch
 
 A time clock for a small team (about 9 people: 3 admins, 6 employees). It must stay **very easy to use** and **fully bilingual (English / Spanish)**.
 
+**Language.** English is the default for everyone. Spanish is the second option, chosen with the **ES** button in the header or in Settings, and only that choice is saved on the device (`tc-language` in `localStorage`). The app never switches language based on the phone's own setting.
+
 **Sections.** The app is split into sections chosen from a side menu (left column on wide screens; a **Menu** button that opens a drawer on phones). The section is kept in the address (`#clock`, `#timeoff`, `#calendar`, `#daysoff`, `#team`, `#invite`, `#reports`), so a refresh or a bookmark opens it.
 
 | Group | Section | What is there |
