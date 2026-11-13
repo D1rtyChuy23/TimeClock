@@ -36,7 +36,7 @@ export const Route = createRootRoute({
     };
   },
   component: () => (
-    <html lang="es" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         {/* Display settings (src/lib/appearance.ts) before first paint, so a saved scheme never flashes. */}
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
