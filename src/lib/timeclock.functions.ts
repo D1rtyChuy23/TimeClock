@@ -13,6 +13,7 @@ import {
 import type { Sql } from "@/lib/db";
 import { PTO_DAY_HOURS } from "@/lib/pay-period";
 import { parseLocation, parseMiss, type LocationMiss, type PunchLocation } from "@/lib/location";
+import { parseClockRule, readsLocation, siteCheck, type ClockRule, type WorkSite } from "@/lib/work-sites";
 
 export type Role = "admin" | "employee";
 
@@ -22,8 +23,8 @@ export type Profile = {
   email: string;
   role: Role;
   ptoAllowance: number;
-  /** Clock in / out saves where they were (location.ts). Set by an admin. */
-  remote: boolean;
+  /** Where they may clock in and out from (work-sites.ts). Set by an admin. */
+  clockRule: ClockRule;
   createdAt: string;
 };
 
@@ -90,6 +91,8 @@ export type Snapshot = {
   pto: PtoRequest[];
   holidays: Holiday[];
   offDays: OffDay[];
+  /** Places on-site people must be inside to clock in or out (work-sites.ts). */
+  sites: WorkSite[];
   serverNow: string;
 };
 
@@ -110,6 +113,11 @@ const CODES = new Set([
   "not_open",
   "already_in",
   "already_out",
+  "need_location",
+  "off_site",
+  "rough_location",
+  "no_sites",
+  "bad_site",
   "overlap",
   "too_old",
   "changed",
@@ -168,7 +176,7 @@ function mapProfile(row: Record<string, unknown>): Profile {
     email: String(row.email ?? ""),
     role,
     ptoAllowance: num(row.pto_allowance) || 0,
-    remote: row.remote === true || row.remote === "t" || row.remote === "true",
+    clockRule: parseClockRule(row.clock_rule),
     createdAt: iso(row.created_at) ?? new Date().toISOString(),
   };
 }
@@ -224,7 +232,7 @@ async function ensureProfile(sql: Sql, userId: string): Promise<Profile> {
     on conflict (user_id) do update set
       email = excluded.email,
       full_name = case when profiles.full_name = '' then excluded.full_name else profiles.full_name end
-    returning user_id, full_name, email, role, pto_allowance, remote, created_at
+    returning user_id, full_name, email, role, pto_allowance, clock_rule, created_at
   `;
   return mapProfile(rows[0]);
 }
@@ -234,7 +242,7 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
   const admin = me.role === "admin";
   const people = admin
     ? (await sql<Record<string, unknown>>`
-        select user_id, full_name, email, role, pto_allowance, remote, created_at
+        select user_id, full_name, email, role, pto_allowance, clock_rule, created_at
         from profiles order by full_name asc, email asc
       `).map(mapProfile)
     : [me];
@@ -286,6 +294,7 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
     where r.status = 'approved'
     order by r.day asc, full_name asc
   `;
+  const sites = await loadSites(sql);
   const inviteRows = admin
     ? await sql<Record<string, unknown>>`
         select id, email, role, token, created_at, expires_at
@@ -305,6 +314,7 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
       expiresAt: iso(row.expires_at) ?? "",
     })),
     emailReady: emailConfigured(),
+    sites,
     punches: punchRows.map(mapPunch),
     pto: ptoRows.map(mapPto),
     holidays: holidayRows.map((row) => ({ day: dayStr(row.day), name: String(row.name ?? "") })),
@@ -370,12 +380,16 @@ export const togglePunch = createServerFn({ method: "POST" })
       if (target !== context.userId && me.role !== "admin") throw new Error("not_allowed");
       if (data.at) {
         if (target !== context.userId || !data.action) throw new Error("not_allowed");
+        await checkPlace(sql, me.clockRule, data.place);
         const id = await offlinePunch(sql, target, data.action === "in" ? "in" : "out", data.at);
-        if (me.remote) await savePlace(sql, id, data.action === "in" ? "in" : "out", data.place);
+        if (readsLocation(me.clockRule)) await savePlace(sql, id, data.action === "in" ? "in" : "out", data.place);
         return;
       }
-      // Only someone punching for themselves has a location to give.
-      const place = me.remote && target === context.userId ? data.place : null;
+      // Only someone punching for themselves has a location to give, and must be on site
+      // if that is their rule. An admin punching for someone (or forcing them out) is not checked.
+      const self = target === context.userId;
+      if (self) await checkPlace(sql, me.clockRule, data.place);
+      const place = self && readsLocation(me.clockRule) ? data.place : null;
       // Shift machine (clock-machine.ts): the screen names the direction. With no
       // action (a page loaded before this change) it still flips, as it used to.
       if (data.action !== "in") {
@@ -403,6 +417,19 @@ export const togglePunch = createServerFn({ method: "POST" })
   });
 
 type Place = { loc: PunchLocation | null; miss: LocationMiss | null };
+
+async function loadSites(sql: Sql): Promise<WorkSite[]> {
+  const rows = await sql<Record<string, unknown>>`select id, name, lat, lng, radius_m from work_sites order by name asc, id asc`;
+  return rows.map((r) => ({ id: num(r.id), name: String(r.name ?? ""), lat: num(r.lat), lng: num(r.lng), radiusM: num(r.radius_m) }));
+}
+
+/** On-site rule (work-sites.ts): refuse a punch without a location, or away from every work site. */
+async function checkPlace(sql: Sql, rule: ClockRule, place: Place): Promise<void> {
+  if (rule !== "onsite") return;
+  if (!place.loc) throw new Error("need_location");
+  const result = siteCheck(place.loc, await loadSites(sql));
+  if (!result.ok) throw new Error(result.reason);
+}
 
 /** Saves where a remote worker clocked in or out, or why the device couldn't say. */
 async function savePlace(sql: Sql, punchId: number, action: "in" | "out", place: Place): Promise<void> {
@@ -615,8 +642,66 @@ export const setRemote = createServerFn({ method: "POST" })
       await requireAdmin(sql, context.userId);
       if (!data.userId) throw new Error("not_found");
       const rows = await sql`
-        update profiles set remote = ${data.remote} where user_id = ${data.userId} returning user_id
+        update profiles set remote = ${data.remote}, clock_rule = ${data.remote ? "remote" : "anywhere"}
+        where user_id = ${data.userId} returning user_id
       `;
+      if (rows.length === 0) throw new Error("not_found");
+    });
+  });
+
+/** Admin: where a person may clock in and out from: anywhere, anywhere with location saved, or only on site. */
+export const setClockRule = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    return { userId: typeof o.userId === "string" ? o.userId : "", rule: parseClockRule(o.rule) };
+  })
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      await requireAdmin(sql, context.userId);
+      if (!data.userId) throw new Error("not_found");
+      const rows = await sql`
+        update profiles set clock_rule = ${data.rule}, remote = ${data.rule !== "anywhere"}
+        where user_id = ${data.userId} returning user_id
+      `;
+      if (rows.length === 0) throw new Error("not_found");
+    });
+  });
+
+/** Admin: add a work site, a circle around a point that on-site people must be inside. */
+export const addSite = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    return {
+      name: typeof o.name === "string" ? o.name.trim() : "",
+      lat: num(o.lat),
+      lng: num(o.lng),
+      radiusM: Math.round(num(o.radiusM)),
+    };
+  })
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      await requireAdmin(sql, context.userId);
+      if (data.name.length < 1 || data.name.length > 60) throw new Error("bad_name");
+      const ok =
+        Number.isFinite(data.lat) && Number.isFinite(data.lng) && Math.abs(data.lat) <= 90 && Math.abs(data.lng) <= 180 &&
+        !(data.lat === 0 && data.lng === 0) && data.radiusM >= 30 && data.radiusM <= 5000;
+      if (!ok) throw new Error("bad_site");
+      await sql`
+        insert into work_sites (name, lat, lng, radius_m)
+        values (${data.name}, ${Math.round(data.lat * 1e6) / 1e6}, ${Math.round(data.lng * 1e6) / 1e6}, ${data.radiusM})
+      `;
+    });
+  });
+
+export const deleteSite = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => ({ id: num(asRecord(raw).id) }))
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      await requireAdmin(sql, context.userId);
+      const rows = await sql`delete from work_sites where id = ${data.id} returning id`;
       if (rows.length === 0) throw new Error("not_found");
     });
   });
@@ -839,7 +924,7 @@ export const loadReport = createServerFn({ method: "POST" })
       }
       if (!isDay(data.yearStart) || !isDay(data.lastDay)) throw new Error("bad_day");
       const people = await sql<Record<string, unknown>>`
-        select user_id, full_name, email, role, pto_allowance, remote, created_at
+        select user_id, full_name, email, role, pto_allowance, clock_rule, created_at
         from profiles order by lower(full_name), email
       `;
       const punches = await sql<Record<string, unknown>>`

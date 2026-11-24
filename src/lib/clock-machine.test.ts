@@ -45,6 +45,7 @@ test("offline punches: what happens to a queued punch for each answer", () => {
   assert.equal(queuedOutcome({ ok: false, error: "already_out" }), "dropped");
   assert.equal(queuedOutcome({ ok: false, error: "overlap" }), "rejected");
   assert.equal(queuedOutcome({ ok: false, error: "too_old" }), "rejected");
+  assert.equal(queuedOutcome({ ok: false, error: "off_site" }), "rejected", "a punch tapped away from the work site is not kept");
   assert.equal(queuedOutcome({ ok: false, error: "error" }), "keep");
 });
 

@@ -48,6 +48,16 @@ import {
 import { english, errorCopyKey, useI18n, type CopyKey, type Lang } from "@/lib/i18n";
 import { accuracyFeet, fmtCoords, getLocation, mapUrl, type LocationMiss, type PunchLocation } from "@/lib/location";
 import {
+  CLOCK_RULES,
+  DEFAULT_RADIUS_M,
+  RADIUS_CHOICES,
+  fmtDistance,
+  parseCoords,
+  readsLocation,
+  siteCheck,
+  type ClockRule,
+} from "@/lib/work-sites";
+import {
   PTO_DAY_HOURS,
   buildPayReport,
   dayKey,
@@ -73,7 +83,9 @@ import {
   removeInvite,
   requestPto,
   setAllowance,
-  setRemote,
+  addSite,
+  deleteSite,
+  setClockRule,
   setRole,
   togglePunch,
   type ClockResult,
@@ -247,6 +259,15 @@ export function ClockApp({ userId }: { userId: string }) {
   );
 
   /** Clock in or out. With no internet the punch is saved here and sent later. */
+  /** Why an on-site person can't punch here, in words, or null when they are at a work site. */
+  const onsiteRefusal = (loc: PunchLocation): string | null => {
+    const check = siteCheck(loc, snap?.sites ?? []);
+    if (check.ok) return null;
+    if (check.reason === "no_sites") return t("errNoSites");
+    if (check.reason === "rough_location") return t("errRoughLocation");
+    return t("offSiteToast", { distance: fmtDistance(check.distanceM), site: check.site.name });
+  };
+
   const punch = async (action: "in" | "out") => {
     if (saving.current) return;
     saving.current = true;
@@ -254,12 +275,22 @@ export function ClockApp({ userId }: { userId: string }) {
     // Stamped now: reading the location below can take a few seconds.
     const at = new Date(Date.now() + offset.current).toISOString();
     // Remote workers (set by an admin): read where they are. GPS works without internet too.
+    const rule: ClockRule = snap?.me.clockRule ?? "anywhere";
     let place: { loc: PunchLocation | null; locMiss: LocationMiss | null } = { loc: null, locMiss: null };
-    if (snap?.me.remote) {
+    if (readsLocation(rule)) {
       setLocating(true);
       const r = await getLocation();
       setLocating(false);
       place = r.ok ? { loc: r.loc, locMiss: null } : { loc: null, locMiss: r.miss };
+      // On-site rule: no location, or not at a work site, means no punch. Said here with the
+      // distance; the server checks the same thing (work-sites.ts) and has the final say.
+      const refusal = rule !== "onsite" ? null : !r.ok ? (r.miss === "denied" ? t("onsiteDenied") : t("onsiteNoFix")) : onsiteRefusal(r.loc);
+      if (refusal) {
+        toast.error(action === "out" ? `${refusal} ${t("onsiteLeftHint")}` : refusal, { duration: 15_000 });
+        saving.current = false;
+        setBusy(false);
+        return;
+      }
       if (!r.ok) toast.warning(t(r.miss === "denied" ? "locDeniedToast" : "locMissToast"), { duration: 10_000 });
     }
     const enqueue = () => {
@@ -267,7 +298,7 @@ export function ClockApp({ userId }: { userId: string }) {
         id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         action,
         at,
-        ...(snap?.me.remote ? place : {}),
+        ...(readsLocation(rule) ? place : {}),
       };
       const next = [...readQueue(userId), item];
       writeQueue(userId, next);
@@ -621,6 +652,8 @@ export function ClockApp({ userId }: { userId: string }) {
               <DaysOffPanel snap={snap} now={now} busy={busy} act={act} />
             ) : view === "team" && admin ? (
               <TeamPanel snap={snap} now={now} busy={busy} act={act} />
+            ) : view === "sites" && admin ? (
+              <SitesPanel snap={snap} busy={busy} act={act} />
             ) : view === "invite" && admin ? (
               <InvitePanel snap={snap} now={now} busy={busy} act={act} />
             ) : view === "reports" && admin ? (
@@ -642,6 +675,7 @@ const NAV_LABEL: Record<View, CopyKey> = {
   calendar: "navCalendar",
   daysoff: "navDaysOff",
   team: "navTeam",
+  sites: "navSites",
   invite: "navInvite",
   reports: "navReports",
 };
@@ -652,13 +686,14 @@ const NAV_ICON: Record<View, LucideIcon> = {
   calendar: CalendarDays,
   daysoff: CalendarOff,
   team: Users,
+  sites: MapPin,
   invite: UserPlus,
   reports: ChartColumn,
 };
 const NAV_GROUPS: Array<{ label: CopyKey; views: View[] }> = [
   { label: "groupYou", views: ["clock", "timeoff", "settings"] },
   { label: "groupEveryone", views: ["calendar", "daysoff"] },
-  { label: "groupAdmin", views: ["team", "invite", "reports"] },
+  { label: "groupAdmin", views: ["team", "sites", "invite", "reports"] },
 ];
 
 function BrandMark() {
@@ -865,7 +900,14 @@ function Mine({
               </span>
             ) : null}
           </button>
-          {snap.me.remote ? (
+          {snap.me.clockRule === "onsite" ? (
+            <p className="mt-3 flex items-start gap-1.5 text-sm text-muted" id="onsite-note">
+              <MapPin className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              {snap.sites.length
+                ? t("onsiteNote", { sites: snap.sites.map((x) => x.name).join(", ") })
+                : t("errNoSites")}
+            </p>
+          ) : snap.me.clockRule === "remote" ? (
             <p className="mt-3 flex items-start gap-1.5 text-sm text-muted" id="remote-note">
               <MapPin className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               {t("remoteNote")}
@@ -2020,7 +2062,7 @@ function PersonCard({
             <span className={onClock ? "font-semibold text-leaf-text" : ""}>{onClock ? t("working") : t("notWorking")}</span>
             {" · "}
             {person.role === "admin" ? t("admin") : t("employee")}
-            {person.remote ? ` · ${t("remote")}` : ""}
+            {person.clockRule !== "anywhere" ? ` · ${t(`ruleShort_${person.clockRule}`)}` : ""}
             {pending > 0 ? ` · ${t("pendingCount", { n: pending })}` : ""}
           </p>
         </div>
@@ -2064,35 +2106,33 @@ function PersonCard({
             </button>
           </div>
 
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-line px-3 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold" id={`remote-label-${person.userId}`}>
-                {t("remoteSwitch")}
-              </p>
-              <p className="mt-0.5 text-sm text-pretty text-muted">{t("remoteSwitchNote")}</p>
+          <fieldset className="rounded-xl border border-line px-3 py-3" data-clock-rule={person.userId}>
+            <legend className="px-1 text-sm font-semibold">{t("ruleTitle")}</legend>
+            <div className="mt-1 space-y-1">
+              {CLOCK_RULES.map((rule) => (
+                <label key={rule} className="flex cursor-pointer items-start gap-3 rounded-lg px-1 py-2 hover:bg-paper-2">
+                  <input
+                    type="radio"
+                    name={`rule-${person.userId}`}
+                    value={rule}
+                    checked={person.clockRule === rule}
+                    disabled={busy}
+                    onChange={() => void act(() => setClockRule({ data: { userId: person.userId, rule } }), "updated")}
+                    className="mt-1 size-5 shrink-0 accent-[var(--color-pine)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{t(`rule_${rule}`)}</span>
+                    <span className="block text-sm text-pretty text-muted">{t(`ruleNote_${rule}`)}</span>
+                  </span>
+                </label>
+              ))}
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={person.remote}
-              aria-labelledby={`remote-label-${person.userId}`}
-              data-remote={person.userId}
-              disabled={busy}
-              onClick={() => void act(() => setRemote({ data: { userId: person.userId, remote: !person.remote } }), "updated")}
-              className={
-                "relative mt-0.5 h-8 w-14 shrink-0 rounded-full border-2 transition-colors disabled:opacity-60 " +
-                (person.remote ? "border-pine bg-pine" : "border-line bg-paper-2")
-              }
-            >
-              <span
-                aria-hidden="true"
-                className={
-                  "absolute top-0.5 size-6 rounded-full shadow transition-all " +
-                  (person.remote ? "left-[1.6rem] bg-foam" : "left-0.5 bg-card")
-                }
-              />
-            </button>
-          </div>
+            {person.clockRule === "onsite" && snap.sites.length === 0 ? (
+              <p className="mt-2 rounded-lg bg-paper-2 px-3 py-2 text-sm font-medium" role="alert">
+                {t("ruleNeedsSite")}
+              </p>
+            ) : null}
+          </fieldset>
 
           <form
             className="flex flex-wrap items-end gap-2"
@@ -2224,5 +2264,145 @@ function PersonCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+/** Admin: work sites. People set to "Only at a work site" can clock in and out only inside one of these circles. */
+function SitesPanel({ snap, busy, act }: { snap: Snapshot; busy: boolean; act: Act }) {
+  const { t } = useI18n();
+  const [name, setName] = useState("");
+  const [coords, setCoords] = useState("");
+  const [radius, setRadius] = useState<number>(DEFAULT_RADIUS_M);
+  const [finding, setFinding] = useState(false);
+  const [confirm, setConfirm] = useState<number | null>(null);
+  const point = parseCoords(coords);
+  const onsite = snap.people.filter((p) => p.clockRule === "onsite");
+  const feet = (m: number) => RADIUS_CHOICES.find((c) => c.meters === m)?.feet ?? Math.round(m * 3.28084);
+
+  async function findHere() {
+    setFinding(true);
+    const r = await getLocation(15_000);
+    setFinding(false);
+    if (!r.ok) {
+      toast.error(t(r.miss === "denied" ? "onsiteDenied" : "onsiteNoFix"));
+      return;
+    }
+    setCoords(fmtCoords(r.loc));
+    toast.success(t("siteHereFound", { n: accuracyFeet(r.loc) }));
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="panel p-4 sm:p-6" id="work-sites">
+        <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("sitesTitle")}</h2>
+        <p className="mt-1 text-sm text-pretty text-muted">{t("sitesLead")}</p>
+        {snap.sites.length === 0 ? <p className="mt-3 text-sm font-medium">{t("sitesEmpty")}</p> : null}
+        <ul className="mt-2 divide-y divide-line">
+          {snap.sites.map((site) => (
+            <li key={site.id} className="flex flex-wrap items-center justify-between gap-3 py-3" data-site={site.name}>
+              <div className="min-w-0">
+                <p className="font-semibold">{site.name}</p>
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-muted">
+                  <span>{t("siteWithin", { n: feet(site.radiusM).toLocaleString() })}</span>
+                  <a
+                    href={mapUrl({ lat: site.lat, lng: site.lng, acc: 0 })}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-ink underline underline-offset-2"
+                  >
+                    {t("viewMap")}
+                  </a>
+                </p>
+              </div>
+              {confirm === site.id ? (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className={solid}
+                    disabled={busy}
+                    onClick={() => void act(() => deleteSite({ data: { id: site.id } }), "removed").then(() => setConfirm(null))}
+                  >
+                    {t("yesDelete")}
+                  </button>
+                  <button type="button" className={ghost} onClick={() => setConfirm(null)}>
+                    {t("keep")}
+                  </button>
+                </div>
+              ) : (
+                <button type="button" className={ghost} onClick={() => setConfirm(site.id)}>
+                  {t("delete")}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 text-sm text-muted" id="onsite-people">
+          {onsite.length
+            ? t("sitesPeople", { names: onsite.map((p) => p.fullName || p.email).join(", ") })
+            : t("sitesNobody")}
+        </p>
+      </section>
+
+      <form
+        className="panel space-y-3 p-4 sm:p-6"
+        id="add-site"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!point) return;
+          void act(() => addSite({ data: { name, lat: point.lat, lng: point.lng, radiusM: radius } }), "saved").then(() => {
+            setName("");
+            setCoords("");
+          });
+        }}
+      >
+        <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("siteAdd")}</h2>
+        <label className="block text-sm font-medium">
+          {t("siteName")}
+          <input
+            id="site-name"
+            required
+            maxLength={60}
+            value={name}
+            placeholder={t("siteNamePh")}
+            onChange={(e) => setName(e.target.value)}
+            className={field}
+          />
+        </label>
+        <div>
+          <label className="block text-sm font-medium" htmlFor="site-coords">
+            {t("siteSpot")}
+          </label>
+          <div className="mt-1 flex flex-wrap gap-2">
+            <button type="button" id="site-here" className={ghost} disabled={finding} onClick={() => void findHere()}>
+              <MapPin className="size-4" aria-hidden="true" />
+              {finding ? t("locating") : t("siteHere")}
+            </button>
+          </div>
+          <input
+            id="site-coords"
+            required
+            value={coords}
+            placeholder="33.57791, -101.85520"
+            onChange={(e) => setCoords(e.target.value)}
+            aria-invalid={coords !== "" && !point}
+            className={field}
+          />
+          <p className="mt-1 text-sm text-pretty text-muted">{coords !== "" && !point ? t("siteCoordsBad") : t("siteSpotHint")}</p>
+        </div>
+        <label className="block text-sm font-medium">
+          {t("siteRadius")}
+          <select id="site-radius" value={radius} onChange={(e) => setRadius(Number(e.target.value))} className={field}>
+            {RADIUS_CHOICES.map((c) => (
+              <option key={c.meters} value={c.meters}>
+                {t(`radius_${c.feet}` as CopyKey)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className={solid} disabled={busy || !point}>
+          {t("siteSave")}
+        </button>
+      </form>
+    </div>
   );
 }

@@ -54,7 +54,7 @@ export function shiftAction(onClock: boolean): ShiftAction {
  *
  *    queued --sent--> saved (late)
  *    queued --already_in / already_out--> dropped   (it already happened, e.g. on another device)
- *    queued --overlap / too_old / bad_range / future--> dropped with a warning (an admin fixes it)
+ *    queued --overlap / too_old / bad_range / future / off_site / need_location--> dropped with a warning (an admin fixes it)
  *    queued --no connection / signed out--> stays queued
  */
 export const OFFLINE_MAX_DAYS = 7;
@@ -63,7 +63,12 @@ export type QueuedOutcome = "saved" | "dropped" | "rejected" | "keep";
 export function queuedOutcome(result: { ok: true } | { ok: false; error: string }): QueuedOutcome {
   if (result.ok) return "saved";
   if (result.error === "already_in" || result.error === "already_out") return "dropped";
-  if (["overlap", "too_old", "bad_range", "future", "not_allowed"].includes(result.error)) return "rejected";
+  if (
+    ["overlap", "too_old", "bad_range", "future", "not_allowed", "need_location", "off_site", "rough_location", "no_sites"].includes(
+      result.error,
+    )
+  )
+    return "rejected";
   return "keep";
 }
 
@@ -139,9 +144,9 @@ export function inviteState(invite: { acceptedAt: string | null; expiresAt: stri
 //    fall back to the clock for everyone else. The section is kept in the
 //    address as `#reports` and so on, so a refresh or a bookmark opens it.
 // ---------------------------------------------------------------------------
-export const VIEWS = ["clock", "timeoff", "settings", "calendar", "daysoff", "team", "invite", "reports"] as const;
+export const VIEWS = ["clock", "timeoff", "settings", "calendar", "daysoff", "team", "sites", "invite", "reports"] as const;
 export type View = (typeof VIEWS)[number];
-export const ADMIN_VIEWS: ReadonlySet<View> = new Set<View>(["team", "invite", "reports"]);
+export const ADMIN_VIEWS: ReadonlySet<View> = new Set<View>(["team", "sites", "invite", "reports"]);
 
 /** The section to show for a requested one (from the menu or the address). */
 export function viewFor(requested: string, admin: boolean): View {
