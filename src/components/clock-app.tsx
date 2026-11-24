@@ -85,6 +85,7 @@ import {
   setAllowance,
   addSite,
   deleteSite,
+  setAccess,
   setClockRule,
   setName,
   setRole,
@@ -472,7 +473,10 @@ export function ClockApp({ userId }: { userId: string }) {
 
   const sync = syncState({ status, queued: queue.length, sending, refused });
   const onClock = snap ? snap.punches.some((p) => p.userId === snap.me.userId && !p.clockOut) : false;
-  const admin = snap?.me.role === "admin";
+  // Access machine (clock-machine.ts): waiting for approval or turned off shows only a notice.
+  const access = snap?.me.access ?? "active";
+  const usable = access === "active";
+  const admin = snap?.me.role === "admin" && usable;
 
   // Section machine (clock-machine.ts). The address keeps it as #reports etc.
   // Re-checked whenever the role is known or changes, so a demoted admin lands on the clock.
@@ -495,7 +499,11 @@ export function ClockApp({ userId }: { userId: string }) {
     window.scrollTo({ top: 0 });
   };
   const badges: Partial<Record<View, number>> = snap
-    ? { team: snap.pto.filter((p) => p.status === "pending").length, invite: (snap.invites ?? []).length }
+    ? {
+        team:
+          snap.pto.filter((p) => p.status === "pending").length + snap.people.filter((p) => p.access === "pending").length,
+        invite: (snap.invites ?? []).length,
+      }
     : {};
 
   return (
@@ -507,13 +515,14 @@ export function ClockApp({ userId }: { userId: string }) {
       data-view={view}
       data-role={snap?.me.role}
       data-shift={snap ? (onClock ? "in" : "out") : undefined}
+      data-access={snap ? access : undefined}
       data-queued={queue.length}
       data-sync={sync}
       data-locating={locating}
     >
       <header className="sticky top-0 z-20 border-b-4 border-leaf bg-bar text-bar-ink">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-          {snap ? (
+          {snap && usable ? (
             <button
               type="button"
               id="menu-btn"
@@ -530,7 +539,7 @@ export function ClockApp({ userId }: { userId: string }) {
           <p
             className={
               "flex items-center gap-2 font-display text-2xl font-bold uppercase leading-none tracking-wide whitespace-nowrap sm:text-3xl " +
-              (snap ? "hidden md:flex" : "")
+              (snap && usable ? "hidden md:flex" : "")
             }
           >
             <BrandMark />
@@ -570,20 +579,34 @@ export function ClockApp({ userId }: { userId: string }) {
         </div>
       </header>
 
-      {snap && menuOpen ? (
+      {snap && usable && menuOpen ? (
         <MenuDrawer onClose={() => setMenuOpen(false)}>
           <SectionNav view={view} admin={admin} badges={badges} onGo={go} />
         </MenuDrawer>
       ) : null}
 
       <div className="mx-auto flex w-full max-w-6xl gap-6 px-4">
-        {snap ? (
+        {snap && usable ? (
           <aside className="sticky top-[76px] hidden w-60 shrink-0 self-start pt-4 md:block" aria-label={t("sections")}>
             <SectionNav view={view} admin={admin} badges={badges} onGo={go} />
           </aside>
         ) : null}
         <main className="w-full min-w-0 max-w-3xl flex-1 pt-4">
           {status === "booting" ? <p className="text-muted">{t("boot")}</p> : null}
+          {snap && !usable ? (
+            <section className="panel p-4 sm:p-6" id="access-notice" data-access={access} role="status">
+              <h1 className="font-display text-[1.75rem] font-bold leading-tight">
+                {access === "pending" ? t("accessPendingTitle") : t("accessBlockedTitle")}
+              </h1>
+              <p className="mt-2 text-pretty">{access === "pending" ? t("accessPendingLead") : t("accessBlockedLead")}</p>
+              <p className="mt-2 text-sm text-muted">{snap.me.email}</p>
+              {access === "pending" ? (
+                <button type="button" className={"mt-4 " + solid} onClick={() => void reload()}>
+                  {t("accessCheck")}
+                </button>
+              ) : null}
+            </section>
+          ) : null}
           {status === "failed" ? (
             <div className="panel p-4 sm:p-6" role="alert">
               <p>{t("loadError")}</p>
@@ -628,7 +651,7 @@ export function ClockApp({ userId }: { userId: string }) {
               </button>
             </div>
           ) : null}
-          {snap ? (
+          {snap && usable ? (
             view === "timeoff" ? (
               <PtoPanel snap={snap} now={now} busy={busy} act={act} day={ptoDay} setDay={setPtoDay} />
             ) : view === "calendar" ? (
@@ -1640,7 +1663,9 @@ function TeamPanel({
   const { t } = useI18n();
   const openIds = new Set(snap.punches.filter((p) => !p.clockOut).map((p) => p.userId));
   const pending = snap.pto.filter((p) => p.status === "pending").length;
-  const people = [...snap.people].sort((a, b) => {
+  const waiting = snap.people.filter((p) => p.access === "pending");
+  const off = snap.people.filter((p) => p.access === "blocked");
+  const people = snap.people.filter((p) => p.access === "active").sort((a, b) => {
     const ao = openIds.has(a.userId) ? 0 : 1;
     const bo = openIds.has(b.userId) ? 0 : 1;
     if (ao !== bo) return ao - bo;
@@ -1654,10 +1679,67 @@ function TeamPanel({
         {" · "}
         {t("pendingCount", { n: pending })}
       </p>
+      {waiting.length > 0 ? (
+        <section className="panel p-4 sm:p-6" id="waiting-approval">
+          <h2 className="font-display text-[1.75rem] font-bold leading-tight">{t("waitingTitle")}</h2>
+          <p className="mt-1 text-sm text-pretty text-muted">{t("waitingLead")}</p>
+          <ul className="mt-2 divide-y divide-line">
+            {waiting.map((p) => (
+              <li key={p.userId} className="flex flex-wrap items-center justify-between gap-3 py-3" data-waiting={p.email}>
+                <div className="min-w-0">
+                  <p className="truncate font-semibold">{p.fullName || p.email}</p>
+                  <p className="truncate text-sm text-muted">{p.email}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className={solid}
+                    disabled={busy}
+                    onClick={() => void act(() => setAccess({ data: { userId: p.userId, action: "approve" } }), "updated")}
+                  >
+                    {t("approve")}
+                  </button>
+                  <button
+                    type="button"
+                    className={ghost}
+                    disabled={busy}
+                    onClick={() => void act(() => setAccess({ data: { userId: p.userId, action: "deny" } }), "updated")}
+                  >
+                    {t("deny")}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {people.length <= 1 ? <p className="text-sm text-muted">{t("emptyTeam")}</p> : null}
       {people.map((person) => (
         <PersonCard key={person.userId} person={person} snap={snap} now={now} busy={busy} act={act} />
       ))}
+      {off.length > 0 ? (
+        <details className="panel p-4 sm:p-6" id="access-off">
+          <summary className="cursor-pointer font-semibold">{t("accessOffTitle", { n: off.length })}</summary>
+          <ul className="mt-2 divide-y divide-line">
+            {off.map((p) => (
+              <li key={p.userId} className="flex flex-wrap items-center justify-between gap-3 py-3" data-access-off={p.email}>
+                <div className="min-w-0">
+                  <p className="truncate font-semibold">{p.fullName || p.email}</p>
+                  <p className="truncate text-sm text-muted">{p.email}</p>
+                </div>
+                <button
+                  type="button"
+                  className={ghost}
+                  disabled={busy}
+                  onClick={() => void act(() => setAccess({ data: { userId: p.userId, action: "restore" } }), "updated")}
+                >
+                  {t("restoreAccess")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -2047,6 +2129,7 @@ function PersonCard({
   const you = person.userId === snap.me.userId;
   const label = person.fullName || person.email || "—";
   const [nameInput, setNameInput] = useState(person.fullName);
+  const [confirmOff, setConfirmOff] = useState(false);
   const nameChanged = nameInput.trim() !== person.fullName && nameInput.trim().length > 0;
 
   useEffect(() => {
@@ -2147,6 +2230,31 @@ function PersonCard({
             >
               {person.role === "admin" ? t("makeEmployee") : t("makeAdmin")}
             </button>
+            {you ? null : confirmOff ? (
+              <span className="flex flex-wrap items-center gap-2" role="group" aria-label={t("turnOffAccess")}>
+                <span className="text-sm font-medium">{t("turnOffConfirm")}</span>
+                <button
+                  type="button"
+                  className={solid}
+                  data-turn-off={person.userId}
+                  disabled={busy}
+                  onClick={() =>
+                    void act(() => setAccess({ data: { userId: person.userId, action: "block" } }), "updated").then(() =>
+                      setConfirmOff(false),
+                    )
+                  }
+                >
+                  {t("turnOffAccess")}
+                </button>
+                <button type="button" className={ghost} onClick={() => setConfirmOff(false)}>
+                  {t("keep")}
+                </button>
+              </span>
+            ) : (
+              <button type="button" className={ghost} disabled={busy} onClick={() => setConfirmOff(true)}>
+                {t("turnOffAccess")}
+              </button>
+            )}
           </div>
 
           <fieldset className="rounded-xl border border-line px-3 py-3" data-clock-rule={person.userId}>

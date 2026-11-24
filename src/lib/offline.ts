@@ -65,8 +65,25 @@ export function writeQueue(userId: string, queue: QueuedPunch[]): void {
 /** The data last shown to this person, and the server-minus-device clock gap at that moment. */
 export type SavedSnapshot = { userId: string; snap: Snapshot; offsetMs: number };
 
+/**
+ * Only this person's own data is kept on the device. An admin's screen also holds
+ * everyone's shifts, locations, emails and invitation links; none of that is saved,
+ * so a lost or shared phone gives away nothing about the rest of the team.
+ */
+export function ownSnapshot(snap: Snapshot): Snapshot {
+  const me = snap.me.userId;
+  return {
+    ...snap,
+    people: snap.people.filter((p) => p.userId === me),
+    invites: [],
+    punches: snap.punches.filter((p) => p.userId === me),
+    pto: snap.pto.filter((p) => p.userId === me),
+    offDays: snap.offDays.filter((d) => d.userId === me),
+  };
+}
+
 export function saveSnapshot(snap: Snapshot, offsetMs: number): void {
-  write(SNAPSHOT_KEY, { userId: snap.me.userId, snap, offsetMs } satisfies SavedSnapshot);
+  write(SNAPSHOT_KEY, { userId: snap.me.userId, snap: ownSnapshot(snap), offsetMs } satisfies SavedSnapshot);
 }
 
 export function readSnapshot(userId: string): SavedSnapshot | null {

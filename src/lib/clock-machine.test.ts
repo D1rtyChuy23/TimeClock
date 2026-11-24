@@ -9,6 +9,9 @@ import {
   viewFor,
   nextLoad,
   queuedOutcome,
+  accessActions,
+  canSetAccess,
+  parseAccess,
   sessionState,
   sessionUserId,
   syncState,
@@ -128,4 +131,20 @@ test("session: offline is not the same as signed out", () => {
   assert.equal(sessionUserId("offline_known", null, "u"), "u");
   assert.equal(sessionUserId("offline_unknown", null, null), null);
   assert.equal(sessionUserId("signed_out", null, "u"), null);
+});
+
+test("access: new accounts wait, leavers can be turned off, and nobody locks themselves or the last admin out", () => {
+  assert.equal(parseAccess(undefined), "pending");
+  assert.deepEqual(accessActions("pending"), ["approve", "deny"]);
+  assert.deepEqual(accessActions("active"), ["block"]);
+  assert.deepEqual(accessActions("blocked"), ["restore"]);
+  const emp = { access: "active" as const, admin: false };
+  assert.ok(canSetAccess("block", emp, false, 1));
+  assert.ok(!canSetAccess("block", emp, true, 1), "not yourself");
+  assert.ok(!canSetAccess("block", { access: "active", admin: true }, false, 0), "not the last admin");
+  assert.ok(canSetAccess("block", { access: "active", admin: true }, false, 1));
+  assert.ok(canSetAccess("approve", { access: "pending", admin: false }, false, 0));
+  assert.ok(!canSetAccess("approve", emp, false, 1), "only pending people are approved");
+  assert.ok(canSetAccess("restore", { access: "blocked", admin: false }, false, 0));
+  assert.equal(queuedOutcome({ ok: false, error: "no_access" }), "rejected");
 });

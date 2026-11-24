@@ -133,3 +133,9 @@ test("the report adds worked hours, PTO at 8 hours a day, and flags problems", (
 test("csv quotes what needs quoting and rounds hours", () => {
   assert.equal(toCsv(["Name", "Hours"], [["Smith, Ana", 7.999], ['Say "hi"', 8]]), 'Name,Hours\r\n"Smith, Ana",8.00\r\n"Say ""hi""",8.00\r\n');
 });
+
+test("csv never lets a name run as a formula", () => {
+  assert.equal(toCsv(["Name"], [["=HYPERLINK(\"http://x\")"]]), 'Name\r\n"\'=HYPERLINK(""http://x"")"\r\n');
+  assert.equal(toCsv(["Name"], [["+1 555"], ["@me"], ["-x"]]), "Name\r\n'+1 555\r\n'@me\r\n'-x\r\n");
+  assert.equal(toCsv(["Hours"], [[-2]]), "Hours\r\n-2.00\r\n", "real numbers are untouched");
+});
