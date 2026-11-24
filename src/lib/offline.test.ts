@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { withQueued, type QueuedPunch } from "./offline.ts";
+import { ownSnapshot, withQueued, type QueuedPunch } from "./offline.ts";
 
 const base = { manual: false, late: false, createdBy: "u", inLoc: null, outLoc: null, inLocMiss: null, outLocMiss: null };
 const closed = { id: 1, userId: "u", clockIn: "2026-11-13T14:00:00Z", clockOut: "2026-11-13T18:00:00Z", ...base };
@@ -52,4 +52,22 @@ test("a remote worker's queued punch carries where they were", () => {
   assert.deepEqual(out[0].inLoc, loc);
   assert.equal(out[0].outLoc, null);
   assert.equal(out[0].outLocMiss, "denied");
+});
+
+test("the copy saved on the device holds only this person's own data", () => {
+  const other = { ...closed, id: 9, userId: "v" };
+  const snap = {
+    me: { userId: "u" },
+    people: [{ userId: "u" }, { userId: "v" }],
+    invites: [{ token: "secret" }],
+    punches: [closed, other],
+    pto: [{ userId: "u" }, { userId: "v" }],
+    offDays: [{ userId: "v" }],
+  } as unknown as Parameters<typeof ownSnapshot>[0];
+  const kept = ownSnapshot(snap);
+  assert.deepEqual(kept.people.map((p) => p.userId), ["u"]);
+  assert.equal(kept.invites.length, 0);
+  assert.deepEqual(kept.punches.map((p) => p.userId), ["u"]);
+  assert.equal(kept.pto.length, 1);
+  assert.equal(kept.offDays.length, 0);
 });

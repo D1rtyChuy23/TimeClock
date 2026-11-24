@@ -1,10 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import {
+  ACCESS_NEXT,
   INVITE_DAYS,
   OFFLINE_MAX_DAYS,
   PTO_NEXT,
   canPto,
+  canSetAccess,
+  parseAccess,
+  type Access,
+  type AccessAction,
   canSetRole,
   inviteState,
   type PtoAction,
@@ -25,6 +30,8 @@ export type Profile = {
   ptoAllowance: number;
   /** Where they may clock in and out from (work-sites.ts). Set by an admin. */
   clockRule: ClockRule;
+  /** pending (waiting for an admin), active, or blocked (access turned off). Access machine in clock-machine.ts. */
+  access: Access;
   createdAt: string;
 };
 
@@ -118,6 +125,8 @@ const CODES = new Set([
   "rough_location",
   "no_sites",
   "bad_site",
+  "no_access",
+  "self_access",
   "overlap",
   "too_old",
   "changed",
@@ -177,6 +186,7 @@ function mapProfile(row: Record<string, unknown>): Profile {
     role,
     ptoAllowance: num(row.pto_allowance) || 0,
     clockRule: parseClockRule(row.clock_rule),
+    access: parseAccess(row.access),
     createdAt: iso(row.created_at) ?? new Date().toISOString(),
   };
 }
@@ -226,23 +236,40 @@ async function ensureProfile(sql: Sql, userId: string): Promise<Profile> {
   const name = String(user.name ?? "").trim().slice(0, 80);
   const email = String(user.email ?? "").slice(0, 200);
   const rows = await sql<Record<string, unknown>>`
-    insert into profiles (user_id, full_name, email, role)
+    insert into profiles (user_id, full_name, email, role, access)
     select ${userId}, ${name}, ${email},
-      case when exists (select 1 from profiles where role = 'admin') then 'employee' else 'admin' end
+      case when exists (select 1 from profiles where role = 'admin') then 'employee' else 'admin' end,
+      -- Only the very first account starts active; everyone else waits for an admin or an invitation.
+      case when exists (select 1 from profiles) then 'pending' else 'active' end
     on conflict (user_id) do update set
       email = excluded.email,
       full_name = case when profiles.full_name = '' then excluded.full_name else profiles.full_name end
-    returning user_id, full_name, email, role, pto_allowance, clock_rule, created_at
+    returning user_id, full_name, email, role, pto_allowance, clock_rule, access, created_at
   `;
   return mapProfile(rows[0]);
 }
 
 async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
   const me = await ensureProfile(sql, userId);
+  // Waiting for approval or turned off: nothing about the team, only who they are.
+  if (me.access !== "active") {
+    return {
+      me,
+      people: [me],
+      invites: [],
+      emailReady: false,
+      sites: [],
+      punches: [],
+      pto: [],
+      holidays: [],
+      offDays: [],
+      serverNow: new Date().toISOString(),
+    };
+  }
   const admin = me.role === "admin";
   const people = admin
     ? (await sql<Record<string, unknown>>`
-        select user_id, full_name, email, role, pto_allowance, clock_rule, created_at
+        select user_id, full_name, email, role, pto_allowance, clock_rule, access, created_at
         from profiles order by full_name asc, email asc
       `).map(mapProfile)
     : [me];
@@ -329,8 +356,15 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
   };
 }
 
-async function requireAdmin(sql: Sql, userId: string): Promise<Profile> {
+/** The signed-in person, refused unless an admin approved them and their access is on. */
+async function requireActive(sql: Sql, userId: string): Promise<Profile> {
   const me = await ensureProfile(sql, userId);
+  if (me.access !== "active") throw new Error("no_access");
+  return me;
+}
+
+async function requireAdmin(sql: Sql, userId: string): Promise<Profile> {
+  const me = await requireActive(sql, userId);
   if (me.role !== "admin") throw new Error("not_allowed");
   return me;
 }
@@ -375,7 +409,7 @@ export const togglePunch = createServerFn({ method: "POST" })
   })
   .handler(async ({ context, data }): Promise<ClockResult> => {
     return run(context.userId, async (sql) => {
-      const me = await ensureProfile(sql, context.userId);
+      const me = await requireActive(sql, context.userId);
       const target = data.targetUserId && data.targetUserId !== context.userId ? data.targetUserId : context.userId;
       if (target !== context.userId && me.role !== "admin") throw new Error("not_allowed");
       if (data.at) {
@@ -515,7 +549,7 @@ export const requestPto = createServerFn({ method: "POST" })
   })
   .handler(async ({ context, data }): Promise<ClockResult> => {
     return run(context.userId, async (sql) => {
-      await ensureProfile(sql, context.userId);
+      await requireActive(sql, context.userId);
       if (!isDay(data.day)) throw new Error("bad_day");
       const note = data.note.trim().slice(0, 200);
       if (data.note.trim().length > 200) throw new Error("bad_note");
@@ -537,7 +571,7 @@ export const cancelPto = createServerFn({ method: "POST" })
   .validator((raw: unknown) => ({ id: num(asRecord(raw).id) }))
   .handler(async ({ context, data }): Promise<ClockResult> => {
     return run(context.userId, async (sql) => {
-      const me = await ensureProfile(sql, context.userId);
+      const me = await requireActive(sql, context.userId);
       const rows = await sql<Record<string, unknown>>`
         select id, user_id, status, day from pto_requests where id = ${data.id}
       `;
@@ -646,6 +680,37 @@ export const setRemote = createServerFn({ method: "POST" })
         where user_id = ${data.userId} returning user_id
       `;
       if (rows.length === 0) throw new Error("not_found");
+    });
+  });
+
+/** Admin: approve a new account, deny it, turn off access for someone who left, or restore it (access machine). */
+export const setAccess = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    const action = (["approve", "deny", "block", "restore"] as const).find((a) => a === o.action) ?? null;
+    return { userId: typeof o.userId === "string" ? o.userId : "", action };
+  })
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      await requireAdmin(sql, context.userId);
+      const action: AccessAction | null = data.action;
+      if (!action) throw new Error("not_allowed");
+      const rows = await sql<Record<string, unknown>>`select role, access from profiles where user_id = ${data.userId}`;
+      if (!rows[0]) throw new Error("not_found");
+      const target = { access: parseAccess(rows[0].access), admin: rows[0].role === "admin" };
+      const others = await sql<{ n: number }>`
+        select count(*) as n from profiles where role = 'admin' and access = 'active' and user_id <> ${data.userId}
+      `;
+      const self = data.userId === context.userId;
+      if (!canSetAccess(action, target, self, num(others[0]?.n))) {
+        throw new Error(self ? "self_access" : target.admin ? "last_admin" : "not_allowed");
+      }
+      await sql`update profiles set access = ${ACCESS_NEXT[action]} where user_id = ${data.userId}`;
+      // Turned off while on the clock: close the shift now, so it doesn't run on.
+      if (ACCESS_NEXT[action] === "blocked") {
+        await sql`update punches set clock_out = now() where user_id = ${data.userId} and clock_out is null`;
+      }
     });
   });
 
@@ -881,6 +946,8 @@ export const acceptInvite = createServerFn({ method: "POST" })
       if (canSetRole(role, num(left[0]?.n))) {
         await sql`update profiles set role = ${role} where user_id = ${context.userId}`;
       }
+      // An invitation is an admin's approval in advance. It never undoes a turned-off access.
+      await sql`update profiles set access = 'active' where user_id = ${context.userId} and access = 'pending'`;
       await sql`update invites set accepted_at = now() where id = ${num(row.id)}`;
     });
   });
@@ -941,8 +1008,8 @@ export const loadReport = createServerFn({ method: "POST" })
       }
       if (!isDay(data.yearStart) || !isDay(data.lastDay)) throw new Error("bad_day");
       const people = await sql<Record<string, unknown>>`
-        select user_id, full_name, email, role, pto_allowance, clock_rule, created_at
-        from profiles order by lower(full_name), email
+        select user_id, full_name, email, role, pto_allowance, clock_rule, access, created_at
+        from profiles where access <> 'pending' order by lower(full_name), email
       `;
       const punches = await sql<Record<string, unknown>>`
         select id, user_id, clock_in, clock_out, manual, late, created_by,

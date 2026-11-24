@@ -64,7 +64,7 @@ export function queuedOutcome(result: { ok: true } | { ok: false; error: string 
   if (result.ok) return "saved";
   if (result.error === "already_in" || result.error === "already_out") return "dropped";
   if (
-    ["overlap", "too_old", "bad_range", "future", "not_allowed", "need_location", "off_site", "rough_location", "no_sites"].includes(
+    ["overlap", "too_old", "bad_range", "future", "not_allowed", "need_location", "off_site", "rough_location", "no_sites", "no_access"].includes(
       result.error,
     )
   )
@@ -216,4 +216,53 @@ export function sessionUserId(state: SessionState, userId: string | null, rememb
   if (state === "signed_in") return userId;
   if (state === "offline_known") return rememberedId;
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// 9. Access: who may use the app at all.
+//
+//    pending --approve / accept invitation--> active
+//    pending --deny--> blocked
+//    active --turn off access--> blocked      (someone who left)
+//    blocked --restore--> active
+//
+//    New accounts start pending, except the very first (the first admin). A
+//    pending or blocked person sees only a notice and can't clock in; the server
+//    refuses everything else with `no_access`. Nobody can turn off their own
+//    access, and the last active admin can't be turned off.
+// ---------------------------------------------------------------------------
+export type Access = "pending" | "active" | "blocked";
+export type AccessAction = "approve" | "deny" | "block" | "restore";
+
+export const ACCESS_NEXT: Record<AccessAction, Access> = {
+  approve: "active",
+  deny: "blocked",
+  block: "blocked",
+  restore: "active",
+};
+
+export function parseAccess(raw: unknown): Access {
+  return raw === "active" || raw === "blocked" ? raw : "pending";
+}
+
+/** The moves an admin is offered for a person in this state. */
+export function accessActions(access: Access): AccessAction[] {
+  return access === "pending" ? ["approve", "deny"] : access === "active" ? ["block"] : ["restore"];
+}
+
+/**
+ * May an admin make this move? `self`: the admin is acting on themselves.
+ * `otherActiveAdmins`: active admins other than the target.
+ */
+export function canSetAccess(
+  action: AccessAction,
+  target: { access: Access; admin: boolean },
+  self: boolean,
+  otherActiveAdmins: number,
+): boolean {
+  if (!accessActions(target.access).includes(action)) return false;
+  const losing = ACCESS_NEXT[action] !== "active";
+  if (losing && self) return false;
+  if (losing && target.admin && target.access === "active" && otherActiveAdmins < 1) return false;
+  return true;
 }

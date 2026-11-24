@@ -220,7 +220,9 @@ export function buildPayReport(input: {
 // ---------------------------------------------------------------------------
 
 function cell(v: string | number): string {
-  const s = typeof v === "number" ? (Math.round(v * 100) / 100).toFixed(2) : v;
+  // Text that starts like a formula (=, +, -, @, tab, return) would run in Excel or Sheets,
+  // so a name such as "=HYPERLINK(...)" is written as plain text instead.
+  const s = typeof v === "number" ? (Math.round(v * 100) / 100).toFixed(2) : /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
