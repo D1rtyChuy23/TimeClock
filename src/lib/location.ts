@@ -64,7 +64,7 @@ export function missFromCode(code: number): LocationMiss {
 }
 
 /** One reading from the device. Never throws and never waits longer than `ms`. */
-export function getLocation(ms = LOCATION_WAIT_MS): Promise<LocationResult> {
+export function getLocation(ms = LOCATION_WAIT_MS, maxAgeMs = 0): Promise<LocationResult> {
   if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
     return Promise.resolve({ ok: false, miss: "unsupported" });
   }
@@ -85,7 +85,8 @@ export function getLocation(ms = LOCATION_WAIT_MS): Promise<LocationResult> {
           finish(loc ? { ok: true, loc } : { ok: false, miss: "unavailable" });
         },
         (err) => finish({ ok: false, miss: missFromCode(err.code) }),
-        { enableHighAccuracy: true, timeout: ms, maximumAge: 60_000 },
+        // A fresh reading: someone who just walked into the shop must not be judged on where they were a minute ago.
+        { enableHighAccuracy: true, timeout: ms, maximumAge: maxAgeMs },
       );
     } catch {
       finish({ ok: false, miss: "unavailable" });
