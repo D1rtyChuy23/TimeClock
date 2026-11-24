@@ -649,6 +649,23 @@ export const setRemote = createServerFn({ method: "POST" })
     });
   });
 
+/** Admin: change how a person's name shows everywhere (Team, reports, downloads). Sign-in never overwrites it. */
+export const setName = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    const name = typeof o.name === "string" ? o.name.replace(/\s+/g, " ").trim() : "";
+    return { userId: typeof o.userId === "string" ? o.userId : "", name };
+  })
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      await requireAdmin(sql, context.userId);
+      if (data.name.length < 1 || data.name.length > 80) throw new Error("bad_name");
+      const rows = await sql`update profiles set full_name = ${data.name} where user_id = ${data.userId} returning user_id`;
+      if (rows.length === 0) throw new Error("not_found");
+    });
+  });
+
 /** Admin: where a person may clock in and out from: anywhere, anywhere with location saved, or only on site. */
 export const setClockRule = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
