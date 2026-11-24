@@ -174,6 +174,214 @@
   --bar-ink: #efeaf8;
 }
 
+/* Teal: Deep teal with aqua */
+:root[data-scheme="teal"] {
+  color-scheme: light;
+  --paper: #f2f7f7;
+  --paper-2: #d9f2f0;
+  --ink: #0b2b2e;
+  --muted: #536a6c;
+  --line: #d5e3e3;
+  --card: #ffffff;
+  --pine: #0f3d40;
+  --foam: #ffffff;
+  --leaf: #2dd4bf;
+  --leaf-ink: #032a26;
+  --leaf-text: #0f766e;
+  --bar: #0b2b2e;
+  --bar-ink: #f2f7f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme="teal"]:not([data-mode="light"]) {
+    color-scheme: dark;
+    --paper: #0b1617;
+    --paper-2: #0d2e2c;
+    --ink: #e6f3f2;
+    --muted: #95b0ae;
+    --line: #1f3536;
+    --card: #112022;
+    --pine: #e6f3f2;
+    --foam: #0b1617;
+    --leaf: #3ddbc6;
+    --leaf-ink: #02241f;
+    --leaf-text: #5eead4;
+    --bar: #071011;
+    --bar-ink: #e6f3f2;
+  }
+}
+:root[data-scheme="teal"][data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #0b1617;
+  --paper-2: #0d2e2c;
+  --ink: #e6f3f2;
+  --muted: #95b0ae;
+  --line: #1f3536;
+  --card: #112022;
+  --pine: #e6f3f2;
+  --foam: #0b1617;
+  --leaf: #3ddbc6;
+  --leaf-ink: #02241f;
+  --leaf-text: #5eead4;
+  --bar: #071011;
+  --bar-ink: #e6f3f2;
+}
+
+/* Slate: Graphite with sky blue */
+:root[data-scheme="slate"] {
+  color-scheme: light;
+  --paper: #f4f6f8;
+  --paper-2: #e2f1fb;
+  --ink: #1b2430;
+  --muted: #5b6675;
+  --line: #dde3ea;
+  --card: #ffffff;
+  --pine: #1b2430;
+  --foam: #ffffff;
+  --leaf: #38bdf8;
+  --leaf-ink: #062033;
+  --leaf-text: #0369a1;
+  --bar: #1b2430;
+  --bar-ink: #f4f6f8;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme="slate"]:not([data-mode="light"]) {
+    color-scheme: dark;
+    --paper: #11161c;
+    --paper-2: #0f2a3a;
+    --ink: #e8edf3;
+    --muted: #9aa6b4;
+    --line: #263140;
+    --card: #18202a;
+    --pine: #e8edf3;
+    --foam: #11161c;
+    --leaf: #5cc8fa;
+    --leaf-ink: #03192a;
+    --leaf-text: #7dd3fc;
+    --bar: #0b0f14;
+    --bar-ink: #e8edf3;
+  }
+}
+:root[data-scheme="slate"][data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #11161c;
+  --paper-2: #0f2a3a;
+  --ink: #e8edf3;
+  --muted: #9aa6b4;
+  --line: #263140;
+  --card: #18202a;
+  --pine: #e8edf3;
+  --foam: #11161c;
+  --leaf: #5cc8fa;
+  --leaf-ink: #03192a;
+  --leaf-text: #7dd3fc;
+  --bar: #0b0f14;
+  --bar-ink: #e8edf3;
+}
+
+/* Rose: Raspberry with soft pink */
+:root[data-scheme="rose"] {
+  color-scheme: light;
+  --paper: #faf5f7;
+  --paper-2: #fde4ee;
+  --ink: #3a0f22;
+  --muted: #6e5560;
+  --line: #eddde4;
+  --card: #ffffff;
+  --pine: #6d1438;
+  --foam: #ffffff;
+  --leaf: #f472b6;
+  --leaf-ink: #3b0420;
+  --leaf-text: #be185d;
+  --bar: #3a0f22;
+  --bar-ink: #faf5f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme="rose"]:not([data-mode="light"]) {
+    color-scheme: dark;
+    --paper: #1a0d13;
+    --paper-2: #3a1426;
+    --ink: #f8e9ef;
+    --muted: #c0a3b0;
+    --line: #3a2530;
+    --card: #241219;
+    --pine: #f8e9ef;
+    --foam: #1a0d13;
+    --leaf: #f68bc4;
+    --leaf-ink: #33041c;
+    --leaf-text: #f9a8d4;
+    --bar: #12080d;
+    --bar-ink: #f8e9ef;
+  }
+}
+:root[data-scheme="rose"][data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #1a0d13;
+  --paper-2: #3a1426;
+  --ink: #f8e9ef;
+  --muted: #c0a3b0;
+  --line: #3a2530;
+  --card: #241219;
+  --pine: #f8e9ef;
+  --foam: #1a0d13;
+  --leaf: #f68bc4;
+  --leaf-ink: #33041c;
+  --leaf-text: #f9a8d4;
+  --bar: #12080d;
+  --bar-ink: #f8e9ef;
+}
+
+/* Copper: Espresso with bright orange */
+:root[data-scheme="copper"] {
+  color-scheme: light;
+  --paper: #f8f5f1;
+  --paper-2: #fde8d4;
+  --ink: #2b1d14;
+  --muted: #6b5d52;
+  --line: #e7ddd3;
+  --card: #ffffff;
+  --pine: #2b1d14;
+  --foam: #ffffff;
+  --leaf: #f08a24;
+  --leaf-ink: #2a1200;
+  --leaf-text: #9a4508;
+  --bar: #2b1d14;
+  --bar-ink: #f8f5f1;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-scheme="copper"]:not([data-mode="light"]) {
+    color-scheme: dark;
+    --paper: #15100c;
+    --paper-2: #3a2412;
+    --ink: #f5ece4;
+    --muted: #b3a497;
+    --line: #33271e;
+    --card: #1e1712;
+    --pine: #f5ece4;
+    --foam: #15100c;
+    --leaf: #f59a3d;
+    --leaf-ink: #2a1200;
+    --leaf-text: #fbb26a;
+    --bar: #0d0907;
+    --bar-ink: #f5ece4;
+  }
+}
+:root[data-scheme="copper"][data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #15100c;
+  --paper-2: #3a2412;
+  --ink: #f5ece4;
+  --muted: #b3a497;
+  --line: #33271e;
+  --card: #1e1712;
+  --pine: #f5ece4;
+  --foam: #15100c;
+  --leaf: #f59a3d;
+  --leaf-ink: #2a1200;
+  --leaf-text: #fbb26a;
+  --bar: #0d0907;
+  --bar-ink: #f5ece4;
+}
+
 /* Contrast: Black and white with yellow. The easiest to read. */
 :root[data-scheme="contrast"] {
   color-scheme: light;

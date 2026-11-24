@@ -16,7 +16,7 @@
 export const APPEARANCE_KEY = "tc-appearance";
 
 export const MODES = ["system", "light", "dark"] as const;
-export const SCHEMES = ["harbor", "mint", "violet", "contrast"] as const;
+export const SCHEMES = ["harbor", "mint", "teal", "slate", "violet", "rose", "copper", "contrast"] as const;
 export const TEXT_SIZES = ["default", "large", "xlarge"] as const;
 export const DENSITIES = ["compact", "comfortable", "roomy"] as const;
 export const MOTIONS = ["system", "reduce"] as const;
@@ -43,6 +43,10 @@ export const SCHEME_SWATCHES: Record<Appearance["scheme"], string[]> = {
   harbor: ["#0b2545", "#ffb703", "#fff1cc", "#f3f5f9", "#0a1628"],
   mint: ["#14201c", "#22b07d", "#e3f5ec", "#f4f6f5", "#0f1513"],
   violet: ["#231a35", "#a78bfa", "#ece6fb", "#f6f4f9", "#14101d"],
+  teal: ["#0b2b2e", "#2dd4bf", "#d9f2f0", "#f2f7f7", "#0b1617"],
+  slate: ["#1b2430", "#38bdf8", "#e2f1fb", "#f4f6f8", "#11161c"],
+  rose: ["#3a0f22", "#f472b6", "#fde4ee", "#faf5f7", "#1a0d13"],
+  copper: ["#2b1d14", "#f08a24", "#fde8d4", "#f8f5f1", "#15100c"],
   contrast: ["#000000", "#ffd60a", "#fff3b0", "#ffffff", "#000000"],
 };
 
@@ -51,6 +55,10 @@ const BAR_COLOR: Record<Appearance["scheme"], string> = {
   harbor: "#0b2545",
   mint: "#14201c",
   violet: "#231a35",
+  teal: "#0b2b2e",
+  slate: "#1b2430",
+  rose: "#3a0f22",
+  copper: "#2b1d14",
   contrast: "#000000",
 };
 
