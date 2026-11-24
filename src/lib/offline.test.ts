@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { withQueued, type QueuedPunch } from "./offline.ts";
 
-const base = { manual: false, late: false, createdBy: "u" };
+const base = { manual: false, late: false, createdBy: "u", inLoc: null, outLoc: null, inLocMiss: null, outLocMiss: null };
 const closed = { id: 1, userId: "u", clockIn: "2026-11-13T14:00:00Z", clockOut: "2026-11-13T18:00:00Z", ...base };
 const q = (action: "in" | "out", at: string, id = at): QueuedPunch => ({ id, action, at });
 
@@ -41,4 +41,15 @@ test("other people's shifts are untouched", () => {
   assert.equal(out.length, 2);
   assert.equal(out[1].clockOut, null);
   assert.equal(out[1].userId, "v");
+});
+
+test("a remote worker's queued punch carries where they were", () => {
+  const loc = { lat: 33.5, lng: -101.8, acc: 10 };
+  const out = withQueued([closed], "u", [
+    { id: "a", action: "in", at: "2026-11-13T19:00:00Z", loc },
+    { id: "b", action: "out", at: "2026-11-13T21:00:00Z", loc: null, locMiss: "denied" },
+  ]);
+  assert.deepEqual(out[0].inLoc, loc);
+  assert.equal(out[0].outLoc, null);
+  assert.equal(out[0].outLocMiss, "denied");
 });

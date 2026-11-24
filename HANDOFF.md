@@ -21,7 +21,7 @@ A time clock for a small team (about 9 people: 3 admins, 6 employees). It must s
 | You | Settings | Display settings for this device: color scheme, light or dark, text size, spacing, motion, language |
 | Everyone | Calendar | Month calendar of closures and approved time off; "Request this day" opens Time off with the day filled in |
 | Everyone | Company days off | **Every day the shop is closed, in date order**, with past ones folded away; admins add or remove days here and switch federal holidays on or off (with arrows to move between years) |
-| Admin | Team | Each person: hours, PTO, shifts, role |
+| Admin | Team | Each person: hours, PTO, shifts, role, **Remote worker** switch (saves where they clock in and out, with a map pin on each shift) |
 | Admin | Invite people | Invitations and who has not joined yet |
 | Admin | Reports | Pay-period hours, PTO, missed punches, downloads |
 
@@ -71,6 +71,8 @@ The first account ever created becomes the admin.
 | `migrations/0002_timeclock.sql` | Tables: `profiles`, `punches`, `pto_requests`, `holidays` |
 | `migrations/0003_invites.sql` | Table: `invites` |
 | `migrations/0004_offline_punches.sql` | `punches.late`: the punch was tapped offline and sent later |
+| `migrations/0005_remote_location.sql` | `profiles.remote`; `punches.in_lat/in_lng/in_acc/in_loc_miss` and the same for `out_` |
+| `src/lib/location.ts` | **Remote worker locations**: reading the device location once per punch, checking it, map links, accuracy in feet. Tested in `location.test.ts` |
 | `src/lib/offline.ts` | **Offline support on the device**: the punch queue, the last good data, the last signed-in person (all `localStorage`). Pure helpers, tested in `offline.test.ts` |
 | `public/sw.js` | Service worker: keeps a copy of the page and its files so the app opens offline. Network first; never caches `/api/` or server functions. Installed by `OfflineSupport` in `__root.tsx`, built app only |
 | `src/routes/index.tsx`, `login.tsx` | Booting / signed out / signed in gate |
@@ -204,6 +206,7 @@ Things worth knowing:
 - **Offline punches.** `punch()` tries the server for up to 8 seconds; if it can't reach it, the tap goes into the queue (`tc-queue:<userId>` in `localStorage`) stamped with the device time corrected by the last known server-clock gap. While anything is queued, new taps queue behind it so they arrive in order. The queue is sent oldest first after every good load, on the browser's `online` event, every 20 seconds while waiting, and on **Send now**. The server (`offlinePunch`) accepts a time no more than 2 minutes ahead and no more than `OFFLINE_MAX_DAYS` (7) back, refuses a clock-in that overlaps a finished shift, and sets `late = true`. A punch that already happened (`already_in`/`already_out`) is dropped silently; this is also why a slow request that both timed out and got through is harmless. The screen shows server data plus the queue (`withQueued()`), so the button, elapsed time and hours stay right offline. The pay report flags `late` shifts as `data-missed="late"`.
 - **Opening offline.** Every good load is saved (`tc-last-snapshot`) and so is the signed-in person (`tc-last-user`). If the session check can't reach the server (`unreachable` from `useCurrentUserState`), `index.tsx` opens the clock for the remembered person, and the first failed load opens on the saved data as `stale`. Signing out clears both; queued punches are kept and sent the next time that person signs in on the device. Nothing saved on the device is trusted by the server.
 - **`waiting` and `blocked` are different.** `waiting` means no connection: the notice says so and the app retries by itself. `blocked` means the server answered but did not take the punch, usually an expired sign-in: the notice says to tap Send now or sign in again, and does not blame the internet. Derive what to show from `syncState()`; do not test `status`, the queue length or flags separately in a component.
+- **Remote worker locations.** An admin turns on **Remote worker** for a person in Team (`setRemote`). From then on, their own Clock in / Clock out first reads the device location once (`getLocation()`, up to 10 seconds, high accuracy), then punches. The punch time is the tap, not the end of the wait. The location is never read at any other time, and never for people who are not remote or when an admin punches for someone else. If the reading fails, the punch still goes through and the reason is saved (`denied`, `unavailable`, `timeout`, `unsupported`); the person sees a message saying how to fix it, and the pay report lists the shift as `noloc`. GPS works without internet, so queued offline punches carry their location too. Every shift row shows **Clock in: view on map** / **Clock out: view on map** (a Google Maps link to the pin) with the accuracy, and the shifts download has **Clock-in location** and **Clock-out location** columns. The server keeps only readings in range, rounded to about a meter.
 - **Offline is not signed out.** A failed session check never shows the sign-in form: the form cannot work without the server. Use `sessionState()`; do not branch on `user === null` alone.
 - **Confirm-before-delete** states are small local `id | null` values in the component that owns the list (`confirmId`, `confirmHoliday`, `confirmPto`, `confirm`). They are deliberately not in the shared module.
 
@@ -220,10 +223,11 @@ The root element of the signed-in app carries the live state. Wait on these inst
 | `data-shift` | `in`, `out` |
 | `data-queued` | Number of punches waiting on this device (`0` when none) |
 | `data-sync` | `synced`, `offline`, `waiting`, `sending`, `blocked` |
+| `data-locating` | `true` while a remote worker's tap is reading the location |
 
 The `<html>` element carries `data-session`: `pending`, `signed_in`, `signed_out`, `offline_known`, `offline_unknown`. The offline sign-in card is `#offline-signin`.
 
-Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Settings: each choice is a native radio inside `fieldset[data-setting="scheme|mode|text|density|motion|language"]`, plus `#reset-settings`. Menu links carry `data-nav="<section>"` (in `aside` on wide screens, in `#menu-drawer` after clicking `#menu-btn` on phones). Company days off: `#days-off` (rows carry `data-day-off="YYYY-MM-DD"`), `#add-day-off`, `#day-off-date`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|late|manual"`), `#queued-notice` (with its **Send now** button), shift rows' `[data-punch="pending|late"]`, `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
+Example: `[data-status="ready"][data-busy="false"]`. PTO decision buttons carry `data-action="approve" | "deny" | "reopen"`. Federal switches carry `data-federal="thanksgiving"` (and so on) with `role="switch"`; invitation rows carry `data-invite="<email>"`; the sign-in form carries `data-mode`. Settings: each choice is a native radio inside `fieldset[data-setting="scheme|mode|text|density|motion|language"]`, plus `#reset-settings`. Menu links carry `data-nav="<section>"` (in `aside` on wide screens, in `#menu-drawer` after clicking `#menu-btn` on phones). Company days off: `#days-off` (rows carry `data-day-off="YYYY-MM-DD"`), `#add-day-off`, `#day-off-date`. Stable ids: `#invite`, `#invite-email`, `#federal-holidays`, `#forgot-link`, `#clock-btn`, `#pto-request`, `#pto-day`, `#pto-note`, `#pay-period-note`, `#pto-days-left`, `#reports` (with `data-report-status` = `loading` / `ready` / `failed`), `#report-period`, `#report-table` (rows carry `data-report-row="<email>"`, the total cell `data-total`), `#missed-punches` (items carry `data-missed="open|long|noloc|late|manual"`), `#queued-notice` (with its **Send now** button), `#remote-note`, the Team switch `[data-remote="<userId>"]` (`role="switch"`, `aria-checked`), shift locations `[data-place="in|out"]` with `data-place-status="pinned|denied|unavailable|timeout|unsupported"`, shift rows' `[data-punch="pending|late"]`, `#download-hours`, `#download-shifts`, `input[data-allowance]`, `#holiday-name`, `#auth-submit`, `#name`, `#email`, `#password`. Prefer these to visible text, which changes with the language.
 
 ---
 
@@ -250,7 +254,7 @@ npm run lint
 Unit tests for the app code:
 
 ```
-node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/preview-path-prefix.test.ts src/lib/clock-machine.test.ts src/lib/federal-holidays.test.ts src/lib/pay-period.test.ts src/lib/appearance.test.ts src/lib/offline.test.ts
+node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/preview-path-prefix.test.ts src/lib/clock-machine.test.ts src/lib/federal-holidays.test.ts src/lib/pay-period.test.ts src/lib/appearance.test.ts src/lib/offline.test.ts src/lib/location.test.ts
 ```
 
 `npm test` runs the scaffold's script tests first. Outside a Grok Build workspace 17 of those fail because they read `.grok/` files that are not in this repository, and `npm test` then stops before it reaches the app tests. Use the command above to run the app tests on their own.
@@ -278,13 +282,15 @@ node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib
 - No CSV or payroll export, no overtime rules, no pay periods other than Monday–Sunday weeks.
 - Two people signing up at the same instant as the very first accounts could both become admin. The Team tab can fix it.
 - Missed shifts added by an admin are not checked for overlap with existing shifts.
+- A location is only as good as the phone's reading: indoors or with location set to "approximate" it can be off by hundreds of feet, which the accuracy note shows. A person can also turn location off for the site; the punch still counts and is flagged.
+- Tell remote workers their location is recorded at clock in and out (the app says so on their clock screen), and check any local notice rules that apply.
 - Offline, only Clock in / Clock out work. Time off, Team, Reports and other saves need the internet and say so.
 - An offline punch is stamped with the device's clock, corrected by the gap seen at the last good load. A device clock changed while offline would shift it, which is why these punches are flagged for review.
 - The app opens offline only on a device that has opened it online at least once since this change, and only on the main page (sign-in and password reset need the internet).
 
 ## 9. Test status
 
-- App unit tests: 90 of 90 pass, including the offline queue, the RESTORED screen move, and the sync and session machines (state machines including sections, federal holiday dates, pay periods and the report, display settings including the boot script).
+- App unit tests: 95 of 95 pass, including remote locations (`location.test.ts`, the `noloc` report flag, queued locations), the offline queue, the RESTORED screen move, and the sync and session machines (state machines including sections, federal holiday dates, pay periods and the report, display settings including the boot script).
 - End to end, in a headless browser on Central time against `npm run dev` with real sign-up and the embedded database, on 2026-11-10: 109 of 109. On 2026-11-13, with offline support: 135 of 135 against `npm run dev`, plus the 27-check offline suite against the built app (`vite build` + `vite preview`), which covers a reload with no internet through the service worker.
   - Display settings: all three schemes in light and dark, text sizes, spacing, motion, language, arrow keys between choices, saved across a reload, applied before first paint, the sign-in screen, reset, and no sideways scrolling on any section at extra large text with roomy spacing on a phone.
   - Sections and menu, Company days off, pay periods and reports, invitations, sign-in and password reset, clock in/out, time off, lost connection and sign-in errors.

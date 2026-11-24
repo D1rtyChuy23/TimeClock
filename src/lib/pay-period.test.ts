@@ -58,6 +58,15 @@ test("missed punches", () => {
     "late",
   );
   assert.equal(missedKind({ ...base, late: true, clockIn: at(2026, 11, 12, 8), clockOut: null }, today), null, "still on the clock today");
+  assert.equal(
+    missedKind({ ...base, outLocMiss: "denied", clockIn: at(2026, 11, 10, 8), clockOut: at(2026, 11, 10, 16) }, today),
+    "noloc",
+  );
+  assert.equal(
+    missedKind({ ...base, inLocMiss: "timeout", late: true, clockIn: at(2026, 11, 10, 8), clockOut: at(2026, 11, 10, 16) }, today),
+    "noloc",
+    "a missing location is listed before a late send",
+  );
 });
 
 test("the report adds worked hours, PTO at 8 hours a day, and flags problems", () => {

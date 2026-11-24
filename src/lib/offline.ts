@@ -11,6 +11,7 @@
  * arrive, and saved data is only ever shown, under the "no connection" notice.
  * Tested in `offline.test.ts`.
  */
+import { parseLocation, parseMiss, type LocationMiss, type PunchLocation } from "./location.ts";
 import type { Punch, Snapshot } from "@/lib/timeclock.functions";
 
 export type QueuedPunch = {
@@ -19,6 +20,9 @@ export type QueuedPunch = {
   action: "in" | "out";
   /** When it was tapped, corrected by the last known gap between this device's clock and the server's. */
   at: string;
+  /** Remote workers: where they were when they tapped (GPS works offline), or why it couldn't be read. */
+  loc?: PunchLocation | null;
+  locMiss?: LocationMiss | null;
 };
 
 const QUEUE_KEY = (userId: string) => `tc-queue:${userId}`;
@@ -50,7 +54,8 @@ function isQueued(v: unknown): v is QueuedPunch {
 
 export function readQueue(userId: string): QueuedPunch[] {
   const list = read<unknown[]>(QUEUE_KEY(userId));
-  return Array.isArray(list) ? list.filter(isQueued) : [];
+  if (!Array.isArray(list)) return [];
+  return list.filter(isQueued).map((q) => ({ ...q, loc: parseLocation(q.loc), locMiss: parseMiss(q.locMiss) }));
 }
 
 export function writeQueue(userId: string, queue: QueuedPunch[]): void {
@@ -90,12 +95,27 @@ export function withQueued(punches: Punch[], userId: string, queue: QueuedPunch[
     const open = list.find((p) => p.userId === userId && !p.clockOut);
     if (q.action === "in" && !open) {
       list = [
-        { id: -(n + 1), userId, clockIn: q.at, clockOut: null, manual: false, late: true, createdBy: userId, pending: true },
+        {
+          id: -(n + 1),
+          userId,
+          clockIn: q.at,
+          clockOut: null,
+          manual: false,
+          late: true,
+          createdBy: userId,
+          inLoc: q.loc ?? null,
+          outLoc: null,
+          inLocMiss: q.loc ? null : (q.locMiss ?? null),
+          outLocMiss: null,
+          pending: true,
+        },
         ...list,
       ];
     } else if (q.action === "out" && open && Date.parse(q.at) > Date.parse(open.clockIn)) {
       open.clockOut = q.at;
       open.late = true;
+      open.outLoc = q.loc ?? null;
+      open.outLocMiss = q.loc ? null : (q.locMiss ?? null);
       open.pending = true;
     }
   });

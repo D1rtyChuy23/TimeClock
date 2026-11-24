@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Clock as ClockIcon,
   CloudOff,
+  MapPin,
   Menu,
   PenLine,
   SlidersHorizontal,
@@ -45,6 +46,7 @@ import {
   type QueuedPunch,
 } from "@/lib/offline";
 import { english, errorCopyKey, useI18n, type CopyKey, type Lang } from "@/lib/i18n";
+import { accuracyFeet, fmtCoords, getLocation, mapUrl, type LocationMiss, type PunchLocation } from "@/lib/location";
 import {
   PTO_DAY_HOURS,
   buildPayReport,
@@ -71,6 +73,7 @@ import {
   removeInvite,
   requestPto,
   setAllowance,
+  setRemote,
   setRole,
   togglePunch,
   type ClockResult,
@@ -205,6 +208,8 @@ export function ClockApp({ userId }: { userId: string }) {
   // Sync machine inputs (clock-machine.ts): the queue is being sent / the server answered but refused it.
   const [sending, setSending] = useState(false);
   const [refused, setRefused] = useState(false);
+  // A remote worker's tap is reading the device location (location.ts).
+  const [locating, setLocating] = useState(false);
   // Refs, because two taps can land before React re-renders with `busy` set.
   const saving = useRef(false);
   // Bumped by every load and save: an answer that is no longer the newest request is dropped,
@@ -244,11 +249,25 @@ export function ClockApp({ userId }: { userId: string }) {
   /** Clock in or out. With no internet the punch is saved here and sent later. */
   const punch = async (action: "in" | "out") => {
     if (saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    // Stamped now: reading the location below can take a few seconds.
+    const at = new Date(Date.now() + offset.current).toISOString();
+    // Remote workers (set by an admin): read where they are. GPS works without internet too.
+    let place: { loc: PunchLocation | null; locMiss: LocationMiss | null } = { loc: null, locMiss: null };
+    if (snap?.me.remote) {
+      setLocating(true);
+      const r = await getLocation();
+      setLocating(false);
+      place = r.ok ? { loc: r.loc, locMiss: null } : { loc: null, locMiss: r.miss };
+      if (!r.ok) toast.warning(t(r.miss === "denied" ? "locDeniedToast" : "locMissToast"), { duration: 10_000 });
+    }
     const enqueue = () => {
       const item: QueuedPunch = {
         id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         action,
-        at: new Date(Date.now() + offset.current).toISOString(),
+        at,
+        ...(snap?.me.remote ? place : {}),
       };
       const next = [...readQueue(userId), item];
       writeQueue(userId, next);
@@ -258,16 +277,19 @@ export function ClockApp({ userId }: { userId: string }) {
     };
     // Earlier punches are still waiting: this one waits behind them, so they arrive in order.
     if (readQueue(userId).length > 0) {
+      saving.current = false;
+      setBusy(false);
       enqueue();
       void flushRef.current();
       return;
     }
-    saving.current = true;
-    setBusy(true);
     const ticket = ++latest.current;
     let ok = false;
     try {
-      const res = await withTimeout(togglePunch({ data: { targetUserId: "", action } }), PUNCH_WAIT_MS);
+      const res = await withTimeout(
+        togglePunch({ data: { targetUserId: "", action, loc: place.loc, locMiss: place.locMiss } }),
+        PUNCH_WAIT_MS,
+      );
       if (res.ok) {
         if (ticket === latest.current) loaded(res.data);
         toast.success(t(action === "in" ? "clockedIn" : "clockedOut"));
@@ -311,7 +333,9 @@ export function ClockApp({ userId }: { userId: string }) {
         let res: ClockResult;
         try {
           res = await withTimeout(
-            togglePunch({ data: { targetUserId: "", action: item.action, at: item.at } }),
+            togglePunch({
+              data: { targetUserId: "", action: item.action, at: item.at, loc: item.loc ?? null, locMiss: item.locMiss ?? null },
+            }),
             PUNCH_WAIT_MS,
           );
         } catch (e) {
@@ -453,6 +477,7 @@ export function ClockApp({ userId }: { userId: string }) {
       data-shift={snap ? (onClock ? "in" : "out") : undefined}
       data-queued={queue.length}
       data-sync={sync}
+      data-locating={locating}
     >
       <header className="sticky top-0 z-20 border-b-4 border-leaf bg-bar text-bar-ink">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
@@ -601,7 +626,7 @@ export function ClockApp({ userId }: { userId: string }) {
             ) : view === "reports" && admin ? (
               <ReportsPanel now={now} />
             ) : (
-              <Mine snap={snap} now={now} busy={busy} onPunch={(action) => void punch(action)} />
+              <Mine snap={snap} now={now} busy={busy} locating={locating} onPunch={(action) => void punch(action)} />
             )
           ) : null}
         </main>
@@ -758,11 +783,13 @@ function Mine({
   snap,
   now,
   busy,
+  locating,
   onPunch,
 }: {
   snap: Snapshot;
   now: Date;
   busy: boolean;
+  locating: boolean;
   onPunch: (action: "in" | "out") => void;
 }) {
   const { t, lang } = useI18n();
@@ -827,12 +854,23 @@ function Mine({
             <span className="font-display text-5xl font-bold uppercase leading-none tracking-wide">
               {open ? t("clockOut") : t("clockIn")}
             </span>
-            {open ? (
+            {locating ? (
+              <span className="mt-2 flex items-center gap-1.5 text-sm font-semibold opacity-90" role="status">
+                <MapPin className="size-4" aria-hidden="true" />
+                {t("locating")}
+              </span>
+            ) : open ? (
               <span className="mt-2 text-sm font-semibold tabular-nums opacity-90">
                 {fmtHms(now.getTime() - new Date(open.clockIn).getTime())} · {t("elapsed")}
               </span>
             ) : null}
           </button>
+          {snap.me.remote ? (
+            <p className="mt-3 flex items-start gap-1.5 text-sm text-muted" id="remote-note">
+              <MapPin className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              {t("remoteNote")}
+            </p>
+          ) : null}
         </div>
         <dl className="grid grid-cols-3 border-t border-dashed border-line">
           {(
@@ -898,9 +936,45 @@ function ShiftRow({ punch, now, lang }: { punch: Punch; now: Date; lang: Lang })
             {punch.pending ? t("waitingToSend") : t("sentLate")}
           </p>
         ) : null}
+        <PunchPlaces punch={punch} />
       </div>
       <p className="shrink-0 font-display text-2xl tabular-nums">{fmtHours(hours)}</p>
     </li>
+  );
+}
+
+/** Where a remote worker clocked in and out: a pin that opens the map, or why there isn't one. */
+function PunchPlaces({ punch }: { punch: Punch }) {
+  const { t } = useI18n();
+  const spots = [
+    { key: "in", label: t("locIn"), loc: punch.inLoc, miss: punch.inLocMiss },
+    { key: "out", label: t("locOut"), loc: punch.outLoc, miss: punch.outLocMiss },
+  ].filter((x) => x.loc || x.miss);
+  if (spots.length === 0) return null;
+  return (
+    <ul className="mt-1 space-y-0.5 text-xs text-muted">
+      {spots.map((x) => (
+        <li key={x.key} className="flex items-center gap-1" data-place={x.key} data-place-status={x.loc ? "pinned" : x.miss}>
+          <MapPin className="size-3.5 shrink-0" aria-hidden="true" />
+          {x.loc ? (
+            <a
+              href={mapUrl(x.loc)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-ink underline underline-offset-2"
+              title={fmtCoords(x.loc)}
+            >
+              {x.label}: {t("viewMap")}
+            </a>
+          ) : (
+            <span>
+              {x.label}: {t(`locMiss_${x.miss as LocationMiss}`)}
+            </span>
+          )}
+          {x.loc ? <span>· {t("withinFeet", { n: accuracyFeet(x.loc) })}</span> : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1606,6 +1680,7 @@ function ReportsPanel({ now }: { now: Date }) {
       ...(withYear ? { year: "numeric" } : {}),
     });
   const names = new Map(report?.rows.map((r) => [r.userId, r]) ?? []);
+  const punchById = new Map(ready?.data.punches.map((p) => [p.id, p]) ?? []);
   const sum = (k: "week1" | "week2" | "ptoDays" | "total") => report?.rows.reduce((a, r) => a + r[k], 0) ?? 0;
   const stamp = (iso: string | null) => {
     if (!iso) return t("stillOpen");
@@ -1622,10 +1697,22 @@ function ReportsPanel({ now }: { now: Date }) {
             report.rows.map((r) => [r.name, r.email, r.week1, r.week2, r.worked, r.ptoDays, r.ptoHours, r.total, r.ptoDaysLeft, String(r.missed)]),
           )
         : toCsv(
-            [t("colName"), t("colEmail"), t("colIn"), t("colOut"), t("colHours"), t("colProblem")],
+            [t("colName"), t("colEmail"), t("colIn"), t("colOut"), t("colHours"), t("colProblem"), t("colInLoc"), t("colOutLoc")],
             report.shifts.map((x) => {
               const who = names.get(x.userId);
-              return [who?.name ?? "", who?.email ?? "", stamp(x.clockIn), stamp(x.clockOut), x.hours, x.kind ? t(`missed_${x.kind}`) : ""];
+              const p = punchById.get(x.punchId);
+              const place = (loc: PunchLocation | null | undefined, miss: LocationMiss | null | undefined) =>
+                loc ? fmtCoords(loc) : miss ? t(`locMiss_${miss}`) : "";
+              return [
+                who?.name ?? "",
+                who?.email ?? "",
+                stamp(x.clockIn),
+                stamp(x.clockOut),
+                x.hours,
+                x.kind ? t(`missed_${x.kind}`) : "",
+                place(p?.inLoc, p?.inLocMiss),
+                place(p?.outLoc, p?.outLocMiss),
+              ];
             }),
           );
     // The byte-order mark makes Excel read accents (Spanish names) correctly.
@@ -1933,6 +2020,7 @@ function PersonCard({
             <span className={onClock ? "font-semibold text-leaf-text" : ""}>{onClock ? t("working") : t("notWorking")}</span>
             {" · "}
             {person.role === "admin" ? t("admin") : t("employee")}
+            {person.remote ? ` · ${t("remote")}` : ""}
             {pending > 0 ? ` · ${t("pendingCount", { n: pending })}` : ""}
           </p>
         </div>
@@ -1973,6 +2061,36 @@ function PersonCard({
               }
             >
               {person.role === "admin" ? t("makeEmployee") : t("makeAdmin")}
+            </button>
+          </div>
+
+          <div className="flex items-start justify-between gap-3 rounded-xl border border-line px-3 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold" id={`remote-label-${person.userId}`}>
+                {t("remoteSwitch")}
+              </p>
+              <p className="mt-0.5 text-sm text-pretty text-muted">{t("remoteSwitchNote")}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={person.remote}
+              aria-labelledby={`remote-label-${person.userId}`}
+              data-remote={person.userId}
+              disabled={busy}
+              onClick={() => void act(() => setRemote({ data: { userId: person.userId, remote: !person.remote } }), "updated")}
+              className={
+                "relative mt-0.5 h-8 w-14 shrink-0 rounded-full border-2 transition-colors disabled:opacity-60 " +
+                (person.remote ? "border-pine bg-pine" : "border-line bg-paper-2")
+              }
+            >
+              <span
+                aria-hidden="true"
+                className={
+                  "absolute top-0.5 size-6 rounded-full shadow transition-all " +
+                  (person.remote ? "left-[1.6rem] bg-foam" : "left-0.5 bg-card")
+                }
+              />
             </button>
           </div>
 
@@ -2076,6 +2194,7 @@ function PersonCard({
                         {t("manual")}
                       </p>
                     ) : null}
+                    <PunchPlaces punch={p} />
                   </div>
                   {confirm === p.id ? (
                     <div className="flex gap-2">

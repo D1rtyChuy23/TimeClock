@@ -12,6 +12,7 @@ import {
 } from "@/lib/clock-machine";
 import type { Sql } from "@/lib/db";
 import { PTO_DAY_HOURS } from "@/lib/pay-period";
+import { parseLocation, parseMiss, type LocationMiss, type PunchLocation } from "@/lib/location";
 
 export type Role = "admin" | "employee";
 
@@ -21,6 +22,8 @@ export type Profile = {
   email: string;
   role: Role;
   ptoAllowance: number;
+  /** Clock in / out saves where they were (location.ts). Set by an admin. */
+  remote: boolean;
   createdAt: string;
 };
 
@@ -33,6 +36,12 @@ export type Punch = {
   /** Tapped while the device was offline and sent later (offline.ts). */
   late: boolean;
   createdBy: string | null;
+  /** Where a remote worker clocked in / out (location.ts). Null when not recorded. */
+  inLoc: PunchLocation | null;
+  outLoc: PunchLocation | null;
+  /** Why a remote worker's location is missing, when the device couldn't give one. */
+  inLocMiss: LocationMiss | null;
+  outLocMiss: LocationMiss | null;
   /** Client only: still waiting on this device to be sent. */
   pending?: boolean;
 };
@@ -159,6 +168,7 @@ function mapProfile(row: Record<string, unknown>): Profile {
     email: String(row.email ?? ""),
     role,
     ptoAllowance: num(row.pto_allowance) || 0,
+    remote: row.remote === true || row.remote === "t" || row.remote === "true",
     createdAt: iso(row.created_at) ?? new Date().toISOString(),
   };
 }
@@ -172,6 +182,10 @@ function mapPunch(row: Record<string, unknown>): Punch {
     manual: row.manual === true || row.manual === "t" || row.manual === "true",
     late: row.late === true || row.late === "t" || row.late === "true",
     createdBy: row.created_by == null ? null : String(row.created_by),
+    inLoc: row.in_lat == null ? null : parseLocation({ lat: row.in_lat, lng: row.in_lng, acc: row.in_acc ?? 0 }),
+    outLoc: row.out_lat == null ? null : parseLocation({ lat: row.out_lat, lng: row.out_lng, acc: row.out_acc ?? 0 }),
+    inLocMiss: parseMiss(row.in_loc_miss),
+    outLocMiss: parseMiss(row.out_loc_miss),
   };
 }
 
@@ -210,7 +224,7 @@ async function ensureProfile(sql: Sql, userId: string): Promise<Profile> {
     on conflict (user_id) do update set
       email = excluded.email,
       full_name = case when profiles.full_name = '' then excluded.full_name else profiles.full_name end
-    returning user_id, full_name, email, role, pto_allowance, created_at
+    returning user_id, full_name, email, role, pto_allowance, remote, created_at
   `;
   return mapProfile(rows[0]);
 }
@@ -220,13 +234,14 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
   const admin = me.role === "admin";
   const people = admin
     ? (await sql<Record<string, unknown>>`
-        select user_id, full_name, email, role, pto_allowance, created_at
+        select user_id, full_name, email, role, pto_allowance, remote, created_at
         from profiles order by full_name asc, email asc
       `).map(mapProfile)
     : [me];
   const punchRows = admin
     ? await sql<Record<string, unknown>>`
-        select id, user_id, clock_in, clock_out, manual, late, created_by
+        select id, user_id, clock_in, clock_out, manual, late, created_by,
+          in_lat, in_lng, in_acc, in_loc_miss, out_lat, out_lng, out_acc, out_loc_miss
         from punches
         where clock_in >= now() - interval '90 days'
            or clock_out is null
@@ -234,7 +249,8 @@ async function snapshot(sql: Sql, userId: string): Promise<Snapshot> {
         order by clock_in desc
       `
     : await sql<Record<string, unknown>>`
-        select id, user_id, clock_in, clock_out, manual, late, created_by
+        select id, user_id, clock_in, clock_out, manual, late, created_by,
+          in_lat, in_lng, in_acc, in_loc_miss, out_lat, out_lng, out_acc, out_loc_miss
         from punches
         where user_id = ${userId}
           and (
@@ -343,7 +359,9 @@ export const togglePunch = createServerFn({ method: "POST" })
     const action = o.action === "in" || o.action === "out" ? o.action : "";
     // Set only for a punch that was tapped offline and is being sent now (offline.ts).
     const at = typeof o.at === "string" ? o.at : "";
-    return { targetUserId: target, action, at };
+    // Remote workers only (location.ts): where they were, or why that couldn't be read.
+    const place: Place = { loc: parseLocation(o.loc), miss: parseMiss(o.locMiss) };
+    return { targetUserId: target, action, at, place };
   })
   .handler(async ({ context, data }): Promise<ClockResult> => {
     return run(context.userId, async (sql) => {
@@ -352,9 +370,12 @@ export const togglePunch = createServerFn({ method: "POST" })
       if (target !== context.userId && me.role !== "admin") throw new Error("not_allowed");
       if (data.at) {
         if (target !== context.userId || !data.action) throw new Error("not_allowed");
-        await offlinePunch(sql, target, data.action === "in" ? "in" : "out", data.at);
+        const id = await offlinePunch(sql, target, data.action === "in" ? "in" : "out", data.at);
+        if (me.remote) await savePlace(sql, id, data.action === "in" ? "in" : "out", data.place);
         return;
       }
+      // Only someone punching for themselves has a location to give.
+      const place = me.remote && target === context.userId ? data.place : null;
       // Shift machine (clock-machine.ts): the screen names the direction. With no
       // action (a page loaded before this change) it still flips, as it used to.
       if (data.action !== "in") {
@@ -363,7 +384,10 @@ export const togglePunch = createServerFn({ method: "POST" })
           where user_id = ${target} and clock_out is null
           returning id
         `;
-        if (closed.length > 0) return;
+        if (closed.length > 0) {
+          if (place) await savePlace(sql, num(closed[0].id), "out", place);
+          return;
+        }
         if (data.action === "out") throw new Error("already_out");
       }
       // one_open_punch makes a second open shift a no-op instead of an error.
@@ -374,15 +398,37 @@ export const togglePunch = createServerFn({ method: "POST" })
         returning id
       `;
       if (opened.length === 0) throw new Error("already_in");
+      if (place) await savePlace(sql, num(opened[0].id), "in", place);
     });
   });
+
+type Place = { loc: PunchLocation | null; miss: LocationMiss | null };
+
+/** Saves where a remote worker clocked in or out, or why the device couldn't say. */
+async function savePlace(sql: Sql, punchId: number, action: "in" | "out", place: Place): Promise<void> {
+  const { loc } = place;
+  const miss = loc ? null : (place.miss ?? "unavailable");
+  if (action === "in") {
+    await sql`
+      update punches set in_lat = ${loc?.lat ?? null}, in_lng = ${loc?.lng ?? null},
+        in_acc = ${loc?.acc ?? null}, in_loc_miss = ${miss}
+      where id = ${punchId}
+    `;
+  } else {
+    await sql`
+      update punches set out_lat = ${loc?.lat ?? null}, out_lng = ${loc?.lng ?? null},
+        out_acc = ${loc?.acc ?? null}, out_loc_miss = ${miss}
+      where id = ${punchId}
+    `;
+  }
+}
 
 /**
  * A punch tapped offline, stamped with the time it was tapped. Checked the same way an
  * admin's manual shift is, so a wrong device clock can't stamp the future or overlap
  * another shift. Marked `late` either way.
  */
-async function offlinePunch(sql: Sql, userId: string, action: "in" | "out", atText: string): Promise<void> {
+async function offlinePunch(sql: Sql, userId: string, action: "in" | "out", atText: string): Promise<number> {
   const at = new Date(atText);
   if (Number.isNaN(at.getTime())) throw new Error("bad_range");
   if (at.getTime() > Date.now() + 120_000) throw new Error("future");
@@ -393,21 +439,21 @@ async function offlinePunch(sql: Sql, userId: string, action: "in" | "out", atTe
     if (open.length > 0) throw new Error("already_in");
     const after = await sql`select id from punches where user_id = ${userId} and clock_out > ${stamp}`;
     if (after.length > 0) throw new Error("overlap");
-    const opened = await sql`
+    const opened = await sql<{ id: number }>`
       insert into punches (user_id, clock_in, manual, late, created_by)
       values (${userId}, ${stamp}, false, true, ${userId})
       on conflict do nothing
       returning id
     `;
     if (opened.length === 0) throw new Error("already_in");
-    return;
+    return num(opened[0].id);
   }
-  const closed = await sql`
+  const closed = await sql<{ id: number }>`
     update punches set clock_out = ${stamp}, late = true
     where user_id = ${userId} and clock_out is null and clock_in < ${stamp}
     returning id
   `;
-  if (closed.length > 0) return;
+  if (closed.length > 0) return num(closed[0].id);
   const open = await sql`select id from punches where user_id = ${userId} and clock_out is null`;
   throw new Error(open.length > 0 ? "bad_range" : "already_out");
 }
@@ -552,6 +598,24 @@ export const setRole = createServerFn({ method: "POST" })
       if (!canSetRole(data.role, num(left[0]?.n))) throw new Error("last_admin");
       const rows = await sql`
         update profiles set role = ${data.role} where user_id = ${data.userId} returning user_id
+      `;
+      if (rows.length === 0) throw new Error("not_found");
+    });
+  });
+
+/** Admin: mark a person as a remote worker, so their clock in / out saves where they were. */
+export const setRemote = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((raw: unknown) => {
+    const o = asRecord(raw);
+    return { userId: typeof o.userId === "string" ? o.userId : "", remote: o.remote === true };
+  })
+  .handler(async ({ context, data }): Promise<ClockResult> => {
+    return run(context.userId, async (sql) => {
+      await requireAdmin(sql, context.userId);
+      if (!data.userId) throw new Error("not_found");
+      const rows = await sql`
+        update profiles set remote = ${data.remote} where user_id = ${data.userId} returning user_id
       `;
       if (rows.length === 0) throw new Error("not_found");
     });
@@ -775,11 +839,12 @@ export const loadReport = createServerFn({ method: "POST" })
       }
       if (!isDay(data.yearStart) || !isDay(data.lastDay)) throw new Error("bad_day");
       const people = await sql<Record<string, unknown>>`
-        select user_id, full_name, email, role, pto_allowance, created_at
+        select user_id, full_name, email, role, pto_allowance, remote, created_at
         from profiles order by lower(full_name), email
       `;
       const punches = await sql<Record<string, unknown>>`
-        select id, user_id, clock_in, clock_out, manual, late, created_by from punches
+        select id, user_id, clock_in, clock_out, manual, late, created_by,
+          in_lat, in_lng, in_acc, in_loc_miss, out_lat, out_lng, out_acc, out_loc_miss from punches
         where clock_in < ${data.to} and (clock_out is null or clock_out > ${data.from})
         order by clock_in
       `;
