@@ -89,13 +89,17 @@ The first account ever created becomes the admin.
 
 All colors are tokens in `src/styles.css`. Components use only the tokens, never raw hex values, so every screen works in every scheme.
 
-**Four color schemes**, each with a light and a dark version, chosen in Settings. Every text color passes WCAG AA (4.5:1) on its background in both versions.
+**Eight color schemes**, each with a light and a dark version, chosen in Settings. Every text color passes WCAG AA (4.5:1) on its background in both versions.
 
 | Scheme | Look |
 |---|---|
 | `harbor` (default) | Deep navy with a marigold Clock in button |
 | `mint` | Near-black ink with a fresh green Clock in button |
+| `teal` | Deep teal with an aqua Clock in button |
+| `slate` | Graphite with a sky blue Clock in button |
 | `violet` | Deep plum with a soft violet Clock in button |
+| `rose` | Raspberry with a soft pink Clock in button |
+| `copper` | Espresso with a bright orange Clock in button |
 | `contrast` | High contrast: black and white with a yellow accent; edges drawn in full, links underlined |
 
 Saved choices from older versions (`classic`, `forest`) fall back to `harbor`.
@@ -115,7 +119,7 @@ To add a scheme: add its swatches to `SCHEME_SWATCHES` and its name to `SCHEMES`
 
 | Attribute | Values | Effect |
 |---|---|---|
-| `data-scheme` | `harbor`, `mint`, `violet`, `contrast` | Color scheme |
+| `data-scheme` | `harbor`, `mint`, `teal`, `slate`, `violet`, `rose`, `copper`, `contrast` | Color scheme |
 | `data-mode` | `light`, `dark`, or absent | Absent follows the device |
 | `data-text` | `default`, `large` (112.5%), `xlarge` (125%) | Root font size, so text, spacing and buttons all scale |
 | `data-density` | `compact`, `comfortable`, `roomy` | Tailwind's `--spacing` (0.2 / 0.25 / 0.3 rem), which sizes padding, gaps and button heights |
