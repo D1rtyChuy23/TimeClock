@@ -93,6 +93,9 @@ export type ReportPunch = {
   manual: boolean;
   /** Tapped offline and sent later, stamped with the device's time. */
   late?: boolean;
+  /** Remote workers: why the clock-in / clock-out location is missing (location.ts). */
+  inLocMiss?: string | null;
+  outLocMiss?: string | null;
 };
 /** Approved time off only. */
 export type ReportPto = { userId: string; day: string; hours: number };
@@ -101,10 +104,11 @@ export type ReportPto = { userId: string; day: string; hours: number };
  * Why a shift needs a look:
  * - open:   still clocked in from an earlier day (forgot to clock out). Counts 0 hours until fixed.
  * - long:   a finished shift over LONG_SHIFT_HOURS (clocked out late, probably forgot).
+ * - noloc:  a remote worker's punch saved without a location (turned off, no signal).
  * - late:   tapped while the device was offline and sent later. Listed so the time can be checked.
  * - manual: added by an admin (a missed punch that was filled in). Listed so it can be checked.
  */
-export type MissedKind = "open" | "long" | "late" | "manual";
+export type MissedKind = "open" | "long" | "noloc" | "late" | "manual";
 export type MissedPunch = { punchId: number; userId: string; clockIn: string; clockOut: string | null; kind: MissedKind };
 
 export type ReportRow = {
@@ -142,6 +146,7 @@ export function missedKind(p: ReportPunch, todayStart: Date): MissedKind | null 
   if (!p.clockOut) return a < todayStart.getTime() ? "open" : null;
   const hours = (new Date(p.clockOut).getTime() - a) / 3_600_000;
   if (hours > LONG_SHIFT_HOURS) return "long";
+  if (p.inLocMiss || p.outLocMiss) return "noloc";
   if (p.late) return "late";
   return p.manual ? "manual" : null;
 }
