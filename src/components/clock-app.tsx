@@ -86,6 +86,7 @@ import {
   addSite,
   deleteSite,
   setClockRule,
+  setName,
   setRole,
   togglePunch,
   type ClockResult,
@@ -2045,10 +2046,15 @@ function PersonCard({
   const pending = requests.filter((p) => p.status === "pending").length;
   const you = person.userId === snap.me.userId;
   const label = person.fullName || person.email || "—";
+  const [nameInput, setNameInput] = useState(person.fullName);
+  const nameChanged = nameInput.trim() !== person.fullName && nameInput.trim().length > 0;
 
   useEffect(() => {
     setAllowanceInput(String(person.ptoAllowance / PTO_DAY_HOURS));
   }, [person.ptoAllowance]);
+  useEffect(() => {
+    setNameInput(person.fullName);
+  }, [person.fullName]);
 
   return (
     <article className="panel p-4 sm:p-6">
@@ -2058,6 +2064,11 @@ function PersonCard({
             {label}
             {you ? <span className="ml-2 text-sm font-medium text-muted">{t("you")}</span> : null}
           </p>
+          {person.email ? (
+            <p className="truncate text-sm text-muted" data-person-email={person.userId}>
+              {person.email}
+            </p>
+          ) : null}
           <p className="mt-1 text-sm text-muted">
             <span className={onClock ? "font-semibold text-leaf-text" : ""}>{onClock ? t("working") : t("notWorking")}</span>
             {" · "}
@@ -2077,6 +2088,38 @@ function PersonCard({
 
       {open ? (
         <div className="mt-4 space-y-4 border-t border-line pt-4">
+          <form
+            className="flex flex-wrap items-end gap-2"
+            data-name-form={person.userId}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!nameChanged) return;
+              void act(() => setName({ data: { userId: person.userId, name: nameInput } }), "saved");
+            }}
+          >
+            <label className="min-w-0 flex-1 text-sm font-medium">
+              {t("name")}
+              <input
+                value={nameInput}
+                maxLength={80}
+                required
+                autoComplete="off"
+                onChange={(e) => setNameInput(e.target.value)}
+                className={field}
+              />
+            </label>
+            <button type="submit" className={ghost} disabled={busy || !nameChanged}>
+              {t("saveName")}
+            </button>
+          </form>
+          {person.email ? (
+            <p className="text-sm">
+              <span className="text-muted">{t("email")}: </span>
+              <a href={`mailto:${person.email}`} className="font-medium underline underline-offset-2 [overflow-wrap:anywhere]">
+                {person.email}
+              </a>
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             {onClock ? (
               <button
